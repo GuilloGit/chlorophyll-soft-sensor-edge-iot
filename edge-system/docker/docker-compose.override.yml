@@ -1,0 +1,5 @@
+services:
+  inference-app:
+    volumes:
+      # Shadows the baked-in code with the live local directory
+      - ../app:/app

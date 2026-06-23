@@ -1,0 +1,27 @@
+services:
+  mqtt_broker:
+    image: eclipse-mosquitto:2.0
+    container_name: mosquitto_edge
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_logs:/mosquitto/log
+    restart: unless-stopped
+
+  inference-app:
+    build: ./app
+    container_name: edge_inference_app
+    depends_on:
+      - mqtt_broker
+    environment:
+      - MQTT_BROKER=mqtt_broker
+      - MQTT_PORT=1883
+      - MQTT_TOPIC=sensor/water/data
+      - MODEL_PATH=model.joblib
+    restart: unless-stopped
+
+volumes:
+  mosquitto_data:
+  mosquitto_logs:
