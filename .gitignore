@@ -36,6 +36,15 @@ model-training/data/
 model-training/models/*.joblib
 model-training/models/*.pkl
 edge-system/app/model.joblib
+edge-system/sensor-sim/data/
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+
+# Sensor checkpoint
+checkpoint.json
 
 # Logs
 *.log

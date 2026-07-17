@@ -5,23 +5,40 @@ services:
     ports:
       - "1883:1883"
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
     restart: unless-stopped
 
+  sensor-sim:
+    build: ../sensor-sim
+    container_name: edge_sensor_sim
+    depends_on:
+      - mqtt_broker
+    environment:
+      - MQTT_BROKER=mqtt_broker
+      - MQTT_PORT=1883
+      - REAL_INTERVAL_SEC=900
+      - TIME_SCALE_FACTOR=900
+    volumes:
+      - sensor_data:/data
+      - ../sensor-sim/data:/app/data:ro
+    restart: unless-stopped
+
   inference-app:
-    build: ./app
+    build: ../app
     container_name: edge_inference_app
     depends_on:
       - mqtt_broker
     environment:
       - MQTT_BROKER=mqtt_broker
       - MQTT_PORT=1883
-      - MQTT_TOPIC=sensor/water/data
-      - MODEL_PATH=model.joblib
+      - DB_PATH=/data/sensor_data.db
+    volumes:
+      - sensor_data:/data
     restart: unless-stopped
 
 volumes:
   mosquitto_data:
   mosquitto_logs:
+  sensor_data:

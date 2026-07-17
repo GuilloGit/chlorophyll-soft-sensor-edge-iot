@@ -1,5 +1,11 @@
 services:
+  sensor-sim:
+    volumes:
+      # Shadows the baked-in code with the live local directory for hot-reload.
+      # The CSV at sensor-sim/data/ is already visible at /app/data via this mount.
+      - ../sensor-sim:/app
+
   inference-app:
     volumes:
-      # Shadows the baked-in code with the live local directory
+      # Shadows the baked-in code with the live local directory for hot-reload
       - ../app:/app

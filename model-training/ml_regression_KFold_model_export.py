@@ -93,9 +93,9 @@ os.makedirs("../edge-system/app", exist_ok=True)
 joblib.dump(edge_pipeline, edge_model_path)
 print(f"  -> Deployed Model to: {edge_model_path}")
 
-# Publish the test data DIRECTLY into the telemetry simulator's data folder
-simulator_csv_path = "../telemetry-sim/data/simulation_test_data.csv"
-os.makedirs("../telemetry-sim/data", exist_ok=True)
+# Publish the test data into the on-Pi sensor simulator's data folder
+simulator_csv_path = "../edge-system/sensor-sim/data/simulation_test_data.csv"
+os.makedirs("../edge-system/sensor-sim/data", exist_ok=True)
 df_test.to_csv(simulator_csv_path, index=False)
 print(f"  -> Deployed Test Data to: {simulator_csv_path}")
 
