@@ -14,6 +14,7 @@ for algal bloom predictions. Scientific Reports.
 """
 
 import os
+import hashlib
 import pandas as pd
 import joblib
 from sklearn.model_selection import KFold
@@ -90,8 +91,13 @@ print("5. Exporting Assets...")
 
 edge_model_path = "../edge-system/app/model.joblib"
 os.makedirs("../edge-system/app", exist_ok=True)
-joblib.dump(edge_pipeline, edge_model_path)
+joblib.dump(edge_pipeline, edge_model_path, compress=3)
 print(f"  -> Deployed Model to: {edge_model_path}")
+
+# Compute SHA-256 for OTA verification
+with open(edge_model_path, "rb") as f:
+    sha = hashlib.sha256(f.read()).hexdigest()
+print(f"  -> Model SHA-256: {sha}")
 
 # Publish the test data into the on-Pi sensor simulator's data folder
 simulator_csv_path = "../edge-system/sensor-sim/data/simulation_test_data.csv"

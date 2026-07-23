@@ -6,14 +6,24 @@ runs the chlorophyll prediction pipeline, and:
     - Publishes predictions to sensor/water/prediction
     - Publishes alarms to sensor/water/alarm (QoS 2) when chlorophyll ≥ 10 µg/L
     - Logs per-sample performance metrics (inference_ms, db_write_ms)
+
+OTA Updates (via the same MQTT broker):
+    - Subscribes to buoy/ota/update for remote model update commands
+    - Implements "Test-Before-Swap" fail-safe: download → SHA-256 verify →
+      trial-load → lock → hot-swap → atomic persist
+    - Publishes status to buoy/ota/status
 """
 
 import os
 import json
 import time
+import shutil
 import sqlite3
+import hashlib
+import threading
 import pandas as pd
 import joblib
+import requests
 import paho.mqtt.client as mqtt
 
 # --- CONFIGURATION ---
@@ -23,11 +33,22 @@ TOPIC_RAW = "sensor/water/raw"
 TOPIC_PREDICTION = "sensor/water/prediction"
 TOPIC_ALARM = "sensor/water/alarm"
 
+# OTA topics (same broker)
+TOPIC_OTA_COMMAND = "buoy/ota/update"
+TOPIC_OTA_STATUS = "buoy/ota/status"
+
 MODEL_PATH = os.getenv("MODEL_PATH", "model.joblib")
+TEMP_MODEL_PATH = MODEL_PATH + ".tmp"
+BAKED_MODEL_PATH = os.getenv("BAKED_MODEL_PATH", "model.joblib")
 DB_PATH = os.getenv("DB_PATH", "/data/sensor_data.db")
 
 # WHO Alert Level 1 threshold (µg/L)
 ALARM_THRESHOLD = 10.0
+
+# Thread-safe model access
+model_lock = threading.Lock()
+current_model = None  # Loaded during startup below
+
 
 # --- DATABASE SETUP ---
 def init_database(db_path: str) -> sqlite3.Connection:
@@ -104,13 +125,32 @@ def store_reading(conn: sqlite3.Connection, timestamp: str, features: dict,
 
 
 # --- MODEL LOADING ---
+def load_initial_model():
+    """Load the ML model, copying the baked-in image to the persistent volume if needed.
+    
+    When MODEL_PATH points to a persistent volume (e.g. /data/model.joblib),
+    the Dockerfile-baked model serves as the initial fallback. This function
+    copies it to the volume on first boot so OTA updates persist across
+    container rebuilds.
+    """
+    if not os.path.exists(MODEL_PATH) and MODEL_PATH != BAKED_MODEL_PATH:
+        if os.path.exists(BAKED_MODEL_PATH):
+            print(f"  -> First boot: copying baked model to {MODEL_PATH}")
+            shutil.copy2(BAKED_MODEL_PATH, MODEL_PATH)
+        else:
+            print(f"  -> CRITICAL: No model found at {MODEL_PATH} or {BAKED_MODEL_PATH}")
+            exit(1)
+
+    return joblib.load(MODEL_PATH)
+
+
 print("=" * 65)
-print("  EDGE INFERENCE ENGINE")
+print("  EDGE INFERENCE ENGINE (with OTA)")
 print("=" * 65)
 
 print("\n1. Loading ML Pipeline...")
 try:
-    model = joblib.load(MODEL_PATH)
+    current_model = load_initial_model()
     print(f"  -> Pipeline loaded from {MODEL_PATH}")
 except Exception as e:
     print(f"  -> CRITICAL: Failed to load model: {e}")
@@ -122,16 +162,109 @@ print(f"  -> Database at {DB_PATH} (WAL mode enabled)")
 print_db_stats(db_conn)
 
 
-# --- MQTT CALLBACKS ---
+# --- OTA UPDATE HANDLER ---
+def _handle_ota_update(client, payload):
+    """Test-Before-Swap OTA: download → hash → trial-load → hot-swap → persist.
+    
+    This is the core fail-safe mechanism:
+    1. Download the new model to a temporary file
+    2. Verify the SHA-256 hash matches the expected value
+    3. Trial-load the model into a dummy variable (catches corrupt files)
+    4. Acquire the model lock and swap the in-memory reference
+    5. Atomically replace the on-disk model (survives reboots)
+    """
+    global current_model
+
+    url = payload.get("url")
+    expected_hash = payload.get("sha256")
+    version = payload.get("version", "unknown")
+
+    if not url or not expected_hash:
+        print("[OTA] Invalid payload: missing 'url' or 'sha256'. Aborting.")
+        return
+
+    print(f"[OTA] Update received — version={version}")
+    print(f"[OTA] Downloading from: {url}")
+
+    # 1. Download to a temporary file
+    try:
+        response = requests.get(url, timeout=300)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"[OTA] Download failed: {e}. Aborting.")
+        _publish_ota_status(client, version, "failed", f"Download error: {e}")
+        return
+
+    with open(TEMP_MODEL_PATH, "wb") as f:
+        f.write(response.content)
+
+    print(f"[OTA] Downloaded {len(response.content)} bytes.")
+
+    # 2. Verify SHA-256
+    actual_hash = hashlib.sha256(response.content).hexdigest()
+    if actual_hash != expected_hash:
+        print(f"[OTA] Hash mismatch! Expected: {expected_hash[:16]}... "
+              f"Got: {actual_hash[:16]}... Aborting.")
+        os.remove(TEMP_MODEL_PATH)
+        _publish_ota_status(client, version, "failed", "Hash mismatch")
+        return
+
+    print("[OTA] SHA-256 verified ✓")
+
+    # 3. Trial-load (the ultimate fail-safe)
+    try:
+        new_model = joblib.load(TEMP_MODEL_PATH)
+    except Exception as e:
+        print(f"[OTA] Model corrupted or incompatible: {e}. Aborting.")
+        os.remove(TEMP_MODEL_PATH)
+        _publish_ota_status(client, version, "failed", f"Load error: {e}")
+        return
+
+    print("[OTA] Trial-load successful ✓")
+
+    # 4. Hot-swap in memory (thread-safe)
+    with model_lock:
+        current_model = new_model
+
+    # 5. Persist atomically to disk (survives reboots)
+    os.replace(TEMP_MODEL_PATH, MODEL_PATH)
+
+    print(f"[OTA] ✅ Update successful! Version {version} is now active and persisted.")
+    _publish_ota_status(client, version, "success", "Model updated")
+
+
+def _publish_ota_status(client, version, status, message):
+    """Publish OTA update status for confirmation."""
+    status_payload = json.dumps({
+        "version": version,
+        "status": status,
+        "message": message,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")
+    })
+    client.publish(TOPIC_OTA_STATUS, status_payload, qos=1)
+
+
+# --- MQTT CALLBACKS (Single client, dispatched by topic) ---
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
-        print(f"\n  Connected to broker! Subscribing to '{TOPIC_RAW}'...\n")
+        print(f"\n  Connected to broker! Subscribing to topics...")
         client.subscribe(TOPIC_RAW, qos=1)
+        client.subscribe(TOPIC_OTA_COMMAND, qos=1)
+        print(f"    → {TOPIC_RAW} (sensor data)")
+        print(f"    → {TOPIC_OTA_COMMAND} (OTA commands)\n")
     else:
         print(f"  Connection failed: reason_code={reason_code}")
 
 
 def on_message(client, userdata, msg):
+    """Dispatch incoming messages by topic."""
+    if msg.topic == TOPIC_RAW:
+        _handle_sensor_reading(client, msg)
+    elif msg.topic == TOPIC_OTA_COMMAND:
+        _handle_ota_message(client, msg)
+
+
+def _handle_sensor_reading(client, msg):
     """Process an incoming sensor reading: parse → infer → store → publish."""
     try:
         # --- Parse ---
@@ -140,10 +273,11 @@ def on_message(client, userdata, msg):
         ground_truth = payload.get("ground_truth", 0.0)
         timestamp = payload.get("timestamp", "Unknown")
 
-        # --- Inference (timed) ---
+        # --- Inference (timed, thread-safe) ---
         t0 = time.perf_counter()
         df = pd.DataFrame([features])
-        prediction = model.predict(df)[0]
+        with model_lock:
+            prediction = current_model.predict(df)[0]
         inference_ms = (time.perf_counter() - t0) * 1000
 
         # --- Alarm check ---
@@ -191,6 +325,17 @@ def on_message(client, userdata, msg):
         print(f"  ERROR processing message: {e}")
 
 
+def _handle_ota_message(client, msg):
+    """Handle incoming OTA update commands."""
+    try:
+        payload = json.loads(msg.payload.decode("utf-8"))
+        _handle_ota_update(client, payload)
+    except json.JSONDecodeError as e:
+        print(f"[OTA] Invalid JSON payload: {e}")
+    except Exception as e:
+        print(f"[OTA] Unexpected error: {e}")
+
+
 # --- NETWORK STARTUP ---
 print("\n3. Connecting to MQTT Broker...")
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -208,7 +353,7 @@ while True:
         time.sleep(3)
 
 print("\n" + "=" * 65)
-print("  Engine ready. Waiting for sensor data...")
+print("  Engine ready. Waiting for sensor data and OTA commands...")
 print("=" * 65 + "\n")
 
 # Block the main thread and listen forever

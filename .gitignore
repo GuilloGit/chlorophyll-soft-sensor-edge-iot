@@ -36,6 +36,7 @@ model-training/data/
 model-training/models/*.joblib
 model-training/models/*.pkl
 edge-system/app/model.joblib
+edge-system/app/model.joblib.tmp
 edge-system/sensor-sim/data/
 
 # SQLite

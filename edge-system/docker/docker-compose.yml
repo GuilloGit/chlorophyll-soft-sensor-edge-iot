@@ -34,6 +34,7 @@ services:
       - MQTT_BROKER=mqtt_broker
       - MQTT_PORT=1883
       - DB_PATH=/data/sensor_data.db
+      - MODEL_PATH=/data/model.joblib
     volumes:
       - sensor_data:/data
     restart: unless-stopped
