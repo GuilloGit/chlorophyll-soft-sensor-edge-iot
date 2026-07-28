@@ -9,7 +9,9 @@ import pandas as pd
 
 # 1. Point to the exported artifacts
 MODEL_PATH = "../edge-system/app/model.joblib"
-DATA_PATH = "../edge-system/sensor-sim/data/simulation_test_data.csv"
+import os
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_PATH = os.path.join(BASE_DIR, "../edge-system/sensor-sim/data/simulation_test_data.csv")
 
 FEATURES = ["EXO3(Temp_C)", "EXO3(spCond_uS_cm)", "EXO3(pH)", "SystemBattery"]
 TARGET = "EXO3(Chlorophyll_ug_L)"

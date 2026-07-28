@@ -24,8 +24,9 @@ from sklearn.pipeline import Pipeline
 from sklearn.compose import TransformedTargetRegressor
 
 # --- CONFIGURATION ---
-TRAIN_FILE = "data/Playa_UPM_resampled_24H_1H.csv"
-TEST_FILE = "data/Presa_UPM_resampled_24H_1H.csv"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TRAIN_FILE = os.path.join(BASE_DIR, "data/Playa_UPM_resampled_24H_1H.csv")
+TEST_FILE = os.path.join(BASE_DIR, "data/Presa_UPM_resampled_24H_1H.csv")
 MODELS_RANDOM_STATE = 22
 
 FEATURES = ["EXO3(Temp_C)", "EXO3(spCond_uS_cm)", "EXO3(pH)", "SystemBattery"]
@@ -89,8 +90,8 @@ edge_pipeline.fit(X_train, y_train)
 
 print("5. Exporting Assets...")
 
-edge_model_path = "../edge-system/app/model.joblib"
-os.makedirs("../edge-system/app", exist_ok=True)
+edge_model_path = os.path.join(BASE_DIR, "../edge-system/app/model.joblib")
+os.makedirs(os.path.join(BASE_DIR, "../edge-system/app"), exist_ok=True)
 joblib.dump(edge_pipeline, edge_model_path, compress=3)
 print(f"  -> Deployed Model to: {edge_model_path}")
 
@@ -100,8 +101,8 @@ with open(edge_model_path, "rb") as f:
 print(f"  -> Model SHA-256: {sha}")
 
 # Publish the test data into the on-Pi sensor simulator's data folder
-simulator_csv_path = "../edge-system/sensor-sim/data/simulation_test_data.csv"
-os.makedirs("../edge-system/sensor-sim/data", exist_ok=True)
+simulator_csv_path = os.path.join(BASE_DIR, "../edge-system/sensor-sim/data/simulation_test_data.csv")
+os.makedirs(os.path.join(BASE_DIR, "../edge-system/sensor-sim/data"), exist_ok=True)
 df_test.to_csv(simulator_csv_path, index=False)
 print(f"  -> Deployed Test Data to: {simulator_csv_path}")
 
