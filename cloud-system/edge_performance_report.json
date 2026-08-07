@@ -1,0 +1,25 @@
+{
+    "edge_fidelity": {
+        "mae": 10.287,
+        "r2": -17.087,
+        "total_samples": 4704
+    },
+    "hardware_performance": {
+        "inference_ms": {
+            "avg": 119.27,
+            "p95": 134.94
+        },
+        "cpu_percent": {
+            "avg": 3.3,
+            "peak": 28.1
+        },
+        "ram_mb": {
+            "avg": 2057.3,
+            "peak": 2111.4
+        }
+    },
+    "system_events": {
+        "total_alarms_triggered": 3536
+    },
+    "timestamp": "2026-09-01T14:44:14"
+}

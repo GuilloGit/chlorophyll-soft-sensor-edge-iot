@@ -1,0 +1,23 @@
+{
+    "cross_validation": {
+        "strategy": "KFold(n_splits=10, shuffle=False) \u2014 all folds concatenated",
+        "mae": 5.280626907977495,
+        "r2": 0.022786581829575936,
+        "description": "Paper-equivalent metric (Mozo et al. 2022 methodology)"
+    },
+    "deployed_model_holdout": {
+        "description": "Last 10% of data \u2014 same split exported as sensor simulator data",
+        "mae": 6.231603240178579,
+        "r2": -9.89552174514274
+    },
+    "baseline_mean_holdout": {
+        "mae": 6.806339321057854,
+        "r2": -5.4810669869958515
+    },
+    "metadata": {
+        "n_folds": 10,
+        "holdout_samples": 21713,
+        "train_samples": 195420,
+        "target": "EXO3(Chlorophyll_ug_L)"
+    }
+}

@@ -17,6 +17,7 @@ import json
 import time
 import signal
 import tempfile
+import datetime
 import pandas as pd
 import paho.mqtt.client as mqtt
 
@@ -159,6 +160,11 @@ def main():
     print("3. Connecting to MQTT broker...")
     client = connect_mqtt()
 
+    # Calculate hybrid "Back-in-Time" start (simplified 24h lookback)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    virtual_time = now - datetime.timedelta(hours=24)
+    print(f"  Virtual start time: {virtual_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+
     # 4. Publishing loop
     print(f"\n{'=' * 65}")
     print(f"  Starting sensor simulation (row {start_index} of {len(df)})...")
@@ -174,10 +180,12 @@ def main():
 
             # Build payload matching the original schema
             payload_dict = {
-                "timestamp": str(row.get("date", f"row-{iloc_idx}")),
+                "timestamp": virtual_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
                 "features": {feat: float(row[feat]) for feat in FEATURES},
                 "ground_truth": float(row[TARGET])
             }
+            
+            virtual_time += datetime.timedelta(seconds=REAL_INTERVAL_SEC)
 
             payload_json = json.dumps(payload_dict)
 

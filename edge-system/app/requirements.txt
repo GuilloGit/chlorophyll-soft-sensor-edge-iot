@@ -3,3 +3,4 @@ pandas==3.0.3
 joblib==1.5.3
 paho-mqtt==2.1.0
 requests==2.32.3
+psutil==5.9.8

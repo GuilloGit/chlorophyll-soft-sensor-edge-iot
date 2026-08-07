@@ -25,12 +25,13 @@ import pandas as pd
 import joblib
 import requests
 import paho.mqtt.client as mqtt
+import psutil
 
 # --- CONFIGURATION ---
 MQTT_BROKER = os.getenv("MQTT_BROKER", "mqtt_broker")
 MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
 TOPIC_RAW = "sensor/water/raw"
-TOPIC_PREDICTION = "sensor/water/prediction"
+TOPIC_DAILY_BATCH = "sensor/water/daily_batch"
 TOPIC_ALARM = "sensor/water/alarm"
 
 # OTA topics (same broker)
@@ -41,9 +42,14 @@ MODEL_PATH = os.getenv("MODEL_PATH", "model.joblib")
 TEMP_MODEL_PATH = MODEL_PATH + ".tmp"
 BAKED_MODEL_PATH = os.getenv("BAKED_MODEL_PATH", "model.joblib")
 DB_PATH = os.getenv("DB_PATH", "/data/sensor_data.db")
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", 96))  # 96 readings = 24 hours at 15min intervals
 
 # WHO Alert Level 1 threshold (µg/L)
 ALARM_THRESHOLD = 10.0
+
+# Thread-safe batching state
+batch_lock = threading.Lock()
+current_batch = []
 
 # Thread-safe model access
 model_lock = threading.Lock()
@@ -79,6 +85,14 @@ def init_database(db_path: str) -> sqlite3.Connection:
             alarm_triggered         INTEGER DEFAULT 0,
             inference_ms            REAL,
             processed_at            TEXT    DEFAULT (datetime('now'))
+        );
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS system_metrics (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp               TEXT    NOT NULL,
+            cpu_percent             REAL,
+            ram_mb                  REAL
         );
     """)
     conn.commit()
@@ -244,6 +258,9 @@ def _publish_ota_status(client, version, status, message):
     client.publish(TOPIC_OTA_STATUS, status_payload, qos=1)
 
 
+# (System monitoring thread removed in favor of polling during inference for batching)
+
+
 # --- MQTT CALLBACKS (Single client, dispatched by topic) ---
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
@@ -265,7 +282,8 @@ def on_message(client, userdata, msg):
 
 
 def _handle_sensor_reading(client, msg):
-    """Process an incoming sensor reading: parse → infer → store → publish."""
+    """Process an incoming sensor reading: parse → infer → store → batch publish."""
+    global current_batch
     try:
         # --- Parse ---
         payload = json.loads(msg.payload.decode("utf-8"))
@@ -277,30 +295,51 @@ def _handle_sensor_reading(client, msg):
         t0 = time.perf_counter()
         df = pd.DataFrame([features])
         with model_lock:
-            prediction = current_model.predict(df)[0]
-        inference_ms = (time.perf_counter() - t0) * 1000
+            prediction = float(current_model.predict(df)[0])
+        inference_ms = float((time.perf_counter() - t0) * 1000)
+        
+        # --- System Metrics ---
+        cpu_usage = float(psutil.cpu_percent())
+        ram_mb = float(psutil.virtual_memory().used / (1024 * 1024))
 
         # --- Alarm check ---
-        alarm = prediction >= ALARM_THRESHOLD
+        alarm = bool(prediction >= ALARM_THRESHOLD)
         alarm_flag = "🚨 ALARM LEVEL 1" if alarm else "✅ Normal"
 
         # --- Store in DB (timed) ---
         t1 = time.perf_counter()
         store_reading(db_conn, timestamp, features, prediction,
-                      ground_truth, alarm, inference_ms)
-        db_write_ms = (time.perf_counter() - t1) * 1000
+                      float(ground_truth), alarm, inference_ms)
+        db_conn.execute(
+            "INSERT INTO system_metrics (timestamp, cpu_percent, ram_mb) VALUES (?, ?, ?)",
+            (timestamp, cpu_usage, ram_mb)
+        )
+        db_conn.commit()
+        db_write_ms = float((time.perf_counter() - t1) * 1000)
 
-        # --- Publish prediction ---
-        pred_payload = json.dumps({
-            "timestamp": timestamp,
+        # --- Batching Logic ---
+        reading_data = {
+            "timestamp": str(timestamp),
             "predicted_chlorophyll": round(prediction, 3),
-            "actual_chlorophyll": round(ground_truth, 3),
+            "actual_chlorophyll": round(float(ground_truth), 3),
             "alarm": alarm,
-            "inference_ms": round(inference_ms, 2)
-        })
-        client.publish(TOPIC_PREDICTION, pred_payload, qos=1)
+            "inference_ms": round(inference_ms, 2),
+            "cpu_percent": round(cpu_usage, 1),
+            "ram_mb": round(ram_mb, 1)
+        }
+        
+        with batch_lock:
+            current_batch.append(reading_data)
+            batch_size = len(current_batch)
+            
+            if batch_size >= BATCH_SIZE:
+                # Publish the entire batch
+                batch_payload = json.dumps(current_batch)
+                client.publish(TOPIC_DAILY_BATCH, batch_payload, qos=1)
+                print(f"  [MQTT] 📡 Published daily batch of {batch_size} readings to {TOPIC_DAILY_BATCH}")
+                current_batch = []
 
-        # --- Publish alarm (if triggered) ---
+        # --- Publish alarm (Immediate override) ---
         if alarm:
             alarm_payload = json.dumps({
                 "timestamp": timestamp,
@@ -309,9 +348,10 @@ def _handle_sensor_reading(client, msg):
                 "level": "WHO_LEVEL_1"
             })
             client.publish(TOPIC_ALARM, alarm_payload, qos=2)
+            print(f"  [MQTT] 🚨 Published ALARM immediately to {TOPIC_ALARM}")
 
         # --- Log ---
-        print(f"[{timestamp}]")
+        print(f"[{timestamp}] (Batch: {batch_size}/{BATCH_SIZE})")
         print(f"  Inputs:    Temp={features.get('EXO3(Temp_C)')}, "
               f"EC={features.get('EXO3(spCond_uS_cm)')}, "
               f"pH={features.get('EXO3(pH)')}, "
@@ -355,6 +395,8 @@ while True:
 print("\n" + "=" * 65)
 print("  Engine ready. Waiting for sensor data and OTA commands...")
 print("=" * 65 + "\n")
+
+# System monitoring is now handled within the inference loop directly.
 
 # Block the main thread and listen forever
 client.loop_forever()
