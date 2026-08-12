@@ -1,13 +1,13 @@
 {
     "edge_fidelity": {
-        "mae": 10.287,
-        "r2": -17.087,
-        "total_samples": 4704
+        "mae": 10.43,
+        "r2": -17.566,
+        "total_samples": 4800
     },
     "hardware_performance": {
         "inference_ms": {
-            "avg": 119.27,
-            "p95": 134.94
+            "avg": 119.33,
+            "p95": 134.89
         },
         "cpu_percent": {
             "avg": 3.3,
@@ -19,7 +19,7 @@
         }
     },
     "system_events": {
-        "total_alarms_triggered": 3536
+        "total_alarms_triggered": 3632
     },
-    "timestamp": "2026-09-01T14:44:14"
+    "timestamp": "2026-09-01T14:45:52"
 }
