@@ -1,0 +1,76 @@
+{
+    "metadata": {
+        "platform": "Raspberry Pi 4 (8GB ARM Cortex-A72 @ 1.5GHz / 1.8GHz)",
+        "operating_system": "Raspberry Pi OS 64-bit / Debian Bullseye Container",
+        "runtime_environment": "Docker Engine + Eclipse Mosquitto 2.0 + Python 3.11",
+        "total_evaluated_samples": 21638
+    },
+    "latency_performance": {
+        "inference_ms": {
+            "mean": 27.743741810369976,
+            "std": 6.458799688023182,
+            "median": 27.125238500048,
+            "p90": 29.30420679913368,
+            "p95": 30.411399198055733,
+            "p99": 40.83345985874986,
+            "min": 16.56082299996342,
+            "max": 721.715061001305,
+            "throughput_predictions_per_sec": 36.04416472857395
+        },
+        "db_write_ms": {
+            "mean": 2.41592316767011,
+            "std": 1.0095291537764297,
+            "median": 2.2301967100181908,
+            "p95": 4.3124525446891315,
+            "max": 12.0
+        },
+        "total_edge_cycle_ms": {
+            "mean": 30.159664978040084,
+            "p95": 34.72385174274486,
+            "sampling_budget_ms": 900000.0,
+            "slack_time_percentage": 99.99664892611355
+        }
+    },
+    "hardware_overhead": {
+        "cpu_percent": {
+            "mean": 0.3033367224327572,
+            "p95": 0.9,
+            "peak": 11.5,
+            "idle_baseline_percent": 1.2
+        },
+        "ram_mb": {
+            "mean": 2415.1476778410665,
+            "p95": 2445.7232421875,
+            "peak": 2491.2578125,
+            "initial_mb": 2428.64453125,
+            "final_mb": 2384.26953125,
+            "slope_mb_per_sample": -0.00229014630410675,
+            "p_value": 0.0,
+            "memory_leak_detected": false
+        },
+        "storage_footprint": {
+            "serialized_model_size_mb": 415.29,
+            "serialized_model_size_bytes": 435461589,
+            "database_size_mb": 2.85
+        }
+    },
+    "energy_tradeoff_model": {
+        "edge_strategy": {
+            "compute_infer_energy_joules": 11.19,
+            "compute_idle_energy_joules": 233272.81,
+            "cellular_modem_energy_joules": 4349.25,
+            "total_daily_energy_joules": 237633.25,
+            "total_daily_energy_wh": 66.01
+        },
+        "cloud_strategy": {
+            "compute_idle_energy_joules": 233280.0,
+            "cellular_modem_energy_joules": 130320.0,
+            "total_daily_energy_joules": 363600.0,
+            "total_daily_energy_wh": 101.0
+        },
+        "energy_savings": {
+            "cellular_communication_savings_percentage": 96.66,
+            "overall_system_energy_savings_percentage": 34.64
+        }
+    }
+}

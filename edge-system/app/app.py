@@ -1,17 +1,31 @@
-"""Edge Inference Engine — Receives sensor data, runs ML predictions, persists results.
+"""
+===============================================================================
+Module Name:       app.py
+Project:           Chlorophyll-a Soft-Sensor Edge-IoT System
+Tier / Subsystem:  Edge Processing Tier (Inference & Persistence Engine)
 
-Subscribes to sensor/water/raw (from sensor-sim or real sensors),
-runs the chlorophyll prediction pipeline, and:
-    - Stores every reading + prediction in SQLite (WAL mode, crash-safe)
-    - Publishes predictions to sensor/water/prediction
-    - Publishes alarms to sensor/water/alarm (QoS 2) when chlorophyll ≥ 10 µg/L
-    - Logs per-sample performance metrics (inference_ms, db_write_ms)
+Description:       Receives streaming multi-parameter physicochemical telemetry,
+                   executes machine learning inference pipeline for Chlorophyll-a
+                   estimation, persists readings and hardware metrics in SQLite
+                   with Write-Ahead Logging (WAL) mode, aggregates 24-hour daily
+                   batches for low-power transmission, triggers immediate WHO
+                   Alert Level 1 alarms upon threshold exceedance, and manages
+                   remote model updates via the Test-Before-Swap OTA protocol.
 
-OTA Updates (via the same MQTT broker):
-    - Subscribes to buoy/ota/update for remote model update commands
-    - Implements "Test-Before-Swap" fail-safe: download → SHA-256 verify →
-      trial-load → lock → hot-swap → atomic persist
-    - Publishes status to buoy/ota/status
+Data Interfaces:
+  - Upstream:      MQTT topics:
+                     - sensor/water/raw (QoS 1, streaming sensor readings)
+                     - buoy/ota/update (QoS 1, remote OTA model commands)
+  - Downstream:    MQTT topics:
+                     - sensor/water/daily_batch (QoS 1, 24-hour aggregated telemetry)
+                     - sensor/water/alarm (QoS 2, critical threshold alerts)
+                     - buoy/ota/status (QoS 1, OTA deployment status notifications)
+  - Storage / IPC: SQLite database with WAL journal mode (/data/sensor_data.db);
+                   Joblib serialized pipeline (/data/model.joblib).
+
+References:        Mozo et al. (2022); WHO Guidelines for Safe Recreational
+                   Water Environments (2003).
+===============================================================================
 """
 
 import os
@@ -84,6 +98,7 @@ def init_database(db_path: str) -> sqlite3.Connection:
             chlorophyll_actual      REAL,
             alarm_triggered         INTEGER DEFAULT 0,
             inference_ms            REAL,
+            db_write_ms             REAL,
             processed_at            TEXT    DEFAULT (datetime('now'))
         );
     """)
@@ -116,23 +131,24 @@ def print_db_stats(conn: sqlite3.Connection):
 
 def store_reading(conn: sqlite3.Connection, timestamp: str, features: dict,
                   prediction: float, ground_truth: float, alarm: bool,
-                  inference_ms: float):
+                  inference_ms: float, db_write_ms: float):
     """Insert a reading into the SQLite database."""
     conn.execute(
         """INSERT INTO readings 
            (timestamp, temp_c, spcond_us_cm, ph, battery,
-            chlorophyll_predicted, chlorophyll_actual, alarm_triggered, inference_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            chlorophyll_predicted, chlorophyll_actual, alarm_triggered, inference_ms, db_write_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            timestamp,
-            features.get("EXO3(Temp_C)"),
-            features.get("EXO3(spCond_uS_cm)"),
-            features.get("EXO3(pH)"),
-            features.get("SystemBattery"),
-            prediction,
-            ground_truth,
+            str(timestamp),
+            float(features.get("EXO3(Temp_C)", 0.0)),
+            float(features.get("EXO3(spCond_uS_cm)", 0.0)),
+            float(features.get("EXO3(pH)", 0.0)),
+            float(features.get("SystemBattery", 0.0)),
+            float(prediction),
+            float(ground_truth),
             1 if alarm else 0,
-            inference_ms
+            float(inference_ms),
+            float(db_write_ms)
         )
     )
     conn.commit()
@@ -223,7 +239,7 @@ def _handle_ota_update(client, payload):
         _publish_ota_status(client, version, "failed", "Hash mismatch")
         return
 
-    print("[OTA] SHA-256 verified ✓")
+    print("[INFO] [OTAManager] SHA-256 verified successfully.")
 
     # 3. Trial-load (the ultimate fail-safe)
     try:
@@ -234,7 +250,7 @@ def _handle_ota_update(client, payload):
         _publish_ota_status(client, version, "failed", f"Load error: {e}")
         return
 
-    print("[OTA] Trial-load successful ✓")
+    print("[INFO] [OTAManager] Trial-load completed successfully.")
 
     # 4. Hot-swap in memory (thread-safe)
     with model_lock:
@@ -243,7 +259,7 @@ def _handle_ota_update(client, payload):
     # 5. Persist atomically to disk (survives reboots)
     os.replace(TEMP_MODEL_PATH, MODEL_PATH)
 
-    print(f"[OTA] ✅ Update successful! Version {version} is now active and persisted.")
+    print(f"[INFO] [OTAManager] Update successful: Version {version} is now active and persisted.")
     _publish_ota_status(client, version, "success", "Model updated")
 
 
@@ -304,28 +320,30 @@ def _handle_sensor_reading(client, msg):
 
         # --- Alarm check ---
         alarm = bool(prediction >= ALARM_THRESHOLD)
-        alarm_flag = "🚨 ALARM LEVEL 1" if alarm else "✅ Normal"
+        alarm_flag = "[ALERT] [WHO-Level-1]" if alarm else "[NORMAL]"
 
         # --- Store in DB (timed) ---
         t1 = time.perf_counter()
-        store_reading(db_conn, timestamp, features, prediction,
-                      float(ground_truth), alarm, inference_ms)
         db_conn.execute(
             "INSERT INTO system_metrics (timestamp, cpu_percent, ram_mb) VALUES (?, ?, ?)",
-            (timestamp, cpu_usage, ram_mb)
+            (str(timestamp), float(cpu_usage), float(ram_mb))
         )
         db_conn.commit()
         db_write_ms = float((time.perf_counter() - t1) * 1000)
 
+        store_reading(db_conn, timestamp, features, prediction,
+                      float(ground_truth), alarm, inference_ms, db_write_ms)
+
         # --- Batching Logic ---
         reading_data = {
             "timestamp": str(timestamp),
-            "predicted_chlorophyll": round(prediction, 3),
+            "predicted_chlorophyll": round(float(prediction), 3),
             "actual_chlorophyll": round(float(ground_truth), 3),
-            "alarm": alarm,
-            "inference_ms": round(inference_ms, 2),
-            "cpu_percent": round(cpu_usage, 1),
-            "ram_mb": round(ram_mb, 1)
+            "alarm": bool(alarm),
+            "inference_ms": round(float(inference_ms), 2),
+            "db_write_ms": round(float(db_write_ms), 2),
+            "cpu_percent": round(float(cpu_usage), 1),
+            "ram_mb": round(float(ram_mb), 1)
         }
         
         with batch_lock:
@@ -336,19 +354,19 @@ def _handle_sensor_reading(client, msg):
                 # Publish the entire batch
                 batch_payload = json.dumps(current_batch)
                 client.publish(TOPIC_DAILY_BATCH, batch_payload, qos=1)
-                print(f"  [MQTT] 📡 Published daily batch of {batch_size} readings to {TOPIC_DAILY_BATCH}")
+                print(f"  [INFO] [InferenceEngine] Published daily batch of {batch_size} readings to {TOPIC_DAILY_BATCH}")
                 current_batch = []
 
         # --- Publish alarm (Immediate override) ---
         if alarm:
             alarm_payload = json.dumps({
-                "timestamp": timestamp,
-                "predicted_chlorophyll": round(prediction, 3),
-                "threshold": ALARM_THRESHOLD,
+                "timestamp": str(timestamp),
+                "predicted_chlorophyll": round(float(prediction), 3),
+                "threshold": float(ALARM_THRESHOLD),
                 "level": "WHO_LEVEL_1"
             })
             client.publish(TOPIC_ALARM, alarm_payload, qos=2)
-            print(f"  [MQTT] 🚨 Published ALARM immediately to {TOPIC_ALARM}")
+            print(f"  [ALERT] [InferenceEngine] Published ALARM immediately to {TOPIC_ALARM}")
 
         # --- Log ---
         print(f"[{timestamp}] (Batch: {batch_size}/{BATCH_SIZE})")
@@ -362,7 +380,7 @@ def _handle_sensor_reading(client, msg):
         print("-" * 65)
 
     except Exception as e:
-        print(f"  ERROR processing message: {e}")
+        print(f"  [ERROR] [InferenceEngine] Error processing message: {e}")
 
 
 def _handle_ota_message(client, msg):

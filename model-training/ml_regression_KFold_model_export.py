@@ -1,16 +1,30 @@
-"""Export the chlorophyll soft-sensor training pipeline.
+"""
+===============================================================================
+Module Name:       ml_regression_KFold_model_export.py
+Project:           Chlorophyll-a Soft-Sensor Edge-IoT System
+Tier / Subsystem:  Machine Learning Workstation Tier
 
-Run this to prepare the final edge-ready model and export the test dataset
-used by the telemetry simulator.
+Description:       Trains and exports the Random Forest soft-sensor pipeline for
+                   Chlorophyll-a estimation from low-cost physical variables.
+                   Performs paper-equivalent sequential 10-fold cross-validation
+                   (without shuffling to prevent temporal data leakage across
+                   seasonal reservoir cycles). Fits the final production pipeline
+                   on the 90% historical partition and exports the compressed
+                   model (joblib compress=3), performance metrics JSON, and
+                   the chronological holdout dataset for edge simulation.
 
-Based on this repository:
-https://github.com/stanislavvakaruk/Chlorophyll_soft-sensor_machine_learning_models
+Data Interfaces:
+  - Upstream:      Multi-year historical reservoir CSV datasets:
+                     - data/Playa_UPM_resampled_24H_1H.csv (Beach buoy)
+                     - data/Presa_UPM_resampled_24H_1H.csv (Dam buoy)
+  - Downstream:    Exported artifacts:
+                     - edge-system/app/model.joblib (compressed scikit-learn pipeline)
+                     - edge-system/app/model_metrics.json (validation metrics)
+                     - edge-system/sensor-sim/data/simulation_test_data.csv (holdout)
+  - Storage / IPC: Local filesystem I/O.
 
-Reference report:
-A. Mozo, J. Morón-López, S. Vakaruk, A. G. Pompa-Pernía,
-A. González-Prieto, J. A. Pascual Aguilar, S. Gómez-Canaval,
-J. M. Ortiz (2022). Chlorophyll soft-sensor based on machine learning models
-for algal bloom predictions. Scientific Reports.
+References:        Mozo et al. (2022); Martín-Suazo et al. (2024).
+===============================================================================
 """
 
 import os
@@ -37,7 +51,7 @@ MODELS_RANDOM_STATE = 22
 FEATURES = ["EXO3(Temp_C)", "EXO3(spCond_uS_cm)", "EXO3(pH)", "SystemBattery"]
 TARGET = "EXO3(Chlorophyll_ug_L)"
 
-print("1. Loading Datasets...")
+print("[INFO] [MLTraining] 1. Loading Datasets...")
 Training_Dataset = pd.read_csv(TRAIN_FILE)
 Testing_Dataset = pd.read_csv(TEST_FILE)
 
@@ -45,7 +59,7 @@ Testing_Dataset = pd.read_csv(TEST_FILE)
 Training_Dataset = Training_Dataset.drop(columns=["Unnamed: 0"]).dropna()
 Testing_Dataset = Testing_Dataset.drop(columns=["Unnamed: 0"]).dropna()
 
-print("2. Building Pipeline Template...")
+print("[INFO] [MLTraining] 2. Building Pipeline Template...")
 # The pipeline encapsulates the RF model and both scalers.
 # It is built as a template and cloned for each CV fold.
 rf_model = RandomForestRegressor(
@@ -63,7 +77,7 @@ pipeline_template = Pipeline([
 ])
 
 # --- PHASE 1: PAPER-EQUIVALENT 10-FOLD CV EVALUATION ---
-print("3. Running 10-Fold Cross-Validation Evaluation (paper-equivalent)...")
+print("[INFO] [MLTraining] 3. Running 10-Fold Cross-Validation Evaluation (sequential non-shuffled)...")
 kf = KFold(n_splits=10, shuffle=False)
 splits_b0 = list(kf.split(Training_Dataset))
 splits_b1 = list(kf.split(Testing_Dataset))
@@ -89,18 +103,16 @@ for fold_idx in range(10):
     fold_mae = mean_absolute_error(df_fold_test[TARGET], fold_preds)
     cv_all_true.append(df_fold_test[TARGET])
     cv_all_pred.append(fold_preds)
-    print(f"  Fold {fold_idx:2d}: MAE={fold_mae:.3f} µg/L")
+    print(f"  [INFO] [MLTraining] Fold {fold_idx:2d}: MAE={fold_mae:.3f} µg/L")
 
 y_cv_true = pd.concat(cv_all_true)
 y_cv_pred = np.concatenate(cv_all_pred)
 cv_mae = mean_absolute_error(y_cv_true, y_cv_pred)
 cv_r2  = r2_score(y_cv_true, y_cv_pred)
-print(f"  -> CV MAE (all folds): {cv_mae:.3f} µg/L  |  R²: {cv_r2:.3f}")
+print(f"[INFO] [MLTraining] CV MAE (all folds): {cv_mae:.3f} µg/L | R²: {cv_r2:.3f}")
 
 # --- PHASE 2: TRAIN AND DEPLOY THE FINAL MODEL (LAST FOLD = 90/10 SPLIT) ---
-print("4. Training the Final Deployment Model (last fold: 90% train / 10% holdout)...")
-# The last fold's train set is the chronologically oldest 90% of the data.
-# The last fold's test set is exported as the simulator data (the Pi's "live" stream).
+print("[INFO] [MLTraining] 4. Training Final Deployment Model (chronological 90% train / 10% holdout)...")
 boya_0_splits = splits_b0[-1]
 boya_1_splits = splits_b1[-1]
 
@@ -119,7 +131,7 @@ y_train = df_train[TARGET]
 edge_pipeline = clone(pipeline_template)
 edge_pipeline.fit(X_train, y_train)
 
-print("4.5 Evaluating Holdout and Baseline...")
+print("[INFO] [MLTraining] 4.5 Evaluating Holdout and Baseline...")
 X_test = df_test[FEATURES]
 y_test = df_test[TARGET]
 
@@ -159,25 +171,24 @@ metrics = {
 metrics_path = os.path.join(BASE_DIR, "../edge-system/app/model_metrics.json")
 with open(metrics_path, "w") as f:
     json.dump(metrics, f, indent=4)
-print(f"  -> Saved Evaluation Metrics to: {metrics_path}")
+print(f"[INFO] [MLTraining] Saved Evaluation Metrics to: {metrics_path}")
 
-print("5. Exporting Assets...")
+print("[INFO] [MLTraining] 5. Exporting Assets...")
 
 edge_model_path = os.path.join(BASE_DIR, "../edge-system/app/model.joblib")
 os.makedirs(os.path.join(BASE_DIR, "../edge-system/app"), exist_ok=True)
 joblib.dump(edge_pipeline, edge_model_path, compress=3)
-print(f"  -> Deployed Model to: {edge_model_path}")
+print(f"[INFO] [MLTraining] Deployed Model to: {edge_model_path}")
 
 # Compute SHA-256 for OTA verification
 with open(edge_model_path, "rb") as f:
     sha = hashlib.sha256(f.read()).hexdigest()
-print(f"  -> Model SHA-256: {sha}")
+print(f"[INFO] [MLTraining] Model SHA-256: {sha}")
 
 # Publish the test data into the on-Pi sensor simulator's data folder
 simulator_csv_path = os.path.join(BASE_DIR, "../edge-system/sensor-sim/data/simulation_test_data.csv")
 os.makedirs(os.path.join(BASE_DIR, "../edge-system/sensor-sim/data"), exist_ok=True)
 df_test.to_csv(simulator_csv_path, index=False)
-print(f"  -> Deployed Test Data to: {simulator_csv_path}")
+print(f"[INFO] [MLTraining] Deployed Test Data to: {simulator_csv_path}")
 
-
-print("\nExport Complete! The model is ready for the Pi, and the data is ready for the simulator.")
+print("\n[INFO] [MLTraining] Export Complete! Pipeline assets deployed successfully.")

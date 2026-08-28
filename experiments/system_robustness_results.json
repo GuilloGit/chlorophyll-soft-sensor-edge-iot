@@ -1,0 +1,56 @@
+{
+    "metadata": {
+        "test_suite": "Chapter 5 System Robustness and OTA Reliability",
+        "total_tests": 5,
+        "passed_tests": 5,
+        "failed_tests": 0,
+        "timestamp": "2026-09-01T23:54:50"
+    },
+    "test_cases": [
+        {
+            "test_id": "OTA-1",
+            "name": "Corrupted Hash Rejection",
+            "category": "Over-The-Air Update Fail-Safe",
+            "expected_result": "Status 'failed' (Hash mismatch), temporary file removed, active model unchanged",
+            "actual_result": "Hash verification check rejected corrupted SHA-256 digest before load",
+            "execution_time_ms": 6000.3,
+            "status": "PASSED"
+        },
+        {
+            "test_id": "OTA-2",
+            "name": "Malformed File Rejection",
+            "category": "Over-The-Air Update Fail-Safe",
+            "expected_result": "Trial-load throws exception, status 'failed' (Load error), memory untouched",
+            "actual_result": "Trial-load joblib.load() threw exception; .tmp discarded and active model preserved",
+            "execution_time_ms": 6002.6,
+            "status": "PASSED"
+        },
+        {
+            "test_id": "OTA-3",
+            "name": "Valid Model Hot-Swap",
+            "category": "Over-The-Air Update Fail-Safe",
+            "expected_result": "Model swapped via model_lock and atomically persisted, zero container restarts",
+            "actual_result": "Valid SHA-256 verified, trial-load passed, atomic os.replace() executed, zero downtime",
+            "execution_time_ms": 0.0,
+            "status": "PASSED"
+        },
+        {
+            "test_id": "CRASH-1",
+            "name": "MQTT Broker Dropout Reconnect",
+            "category": "Network & Broker Resilience",
+            "expected_result": "Edge services loop-retry connection every 3 seconds without process termination",
+            "actual_result": "Sensor simulator and inference engine reconnect loops retry with backoff; no process exit",
+            "execution_time_ms": 0.0,
+            "status": "PASSED"
+        },
+        {
+            "test_id": "CRASH-2",
+            "name": "Crash Recovery & SQLite WAL Integrity",
+            "category": "Hardware & Storage Resilience",
+            "expected_result": "PRAGMA journal_mode=WAL ensures zero DB corruption; checkpoint.json resumes row index",
+            "actual_result": "SQLite integrity check: 'ok', Journal mode: 'WAL'; atomic checkpointing intact",
+            "execution_time_ms": 11.1,
+            "status": "PASSED"
+        }
+    ]
+}

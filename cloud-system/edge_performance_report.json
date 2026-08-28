@@ -1,25 +1,25 @@
 {
     "edge_fidelity": {
-        "mae": 10.552,
-        "r2": -17.987,
-        "total_samples": 4896
+        "mae": 6.73,
+        "r2": -11.044,
+        "total_samples": 19392
     },
     "hardware_performance": {
         "inference_ms": {
-            "avg": 119.43,
-            "p95": 134.96
+            "avg": 111.17,
+            "p95": 134.95
         },
         "cpu_percent": {
-            "avg": 3.4,
+            "avg": 3.1,
             "peak": 28.1
         },
         "ram_mb": {
-            "avg": 2057.2,
+            "avg": 2055.6,
             "peak": 2111.4
         }
     },
     "system_events": {
-        "total_alarms_triggered": 3728
+        "total_alarms_triggered": 5951
     },
-    "timestamp": "2026-09-01T14:47:29"
+    "timestamp": "2026-09-01T18:52:24"
 }

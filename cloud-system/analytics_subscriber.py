@@ -1,3 +1,28 @@
+"""
+===============================================================================
+Module Name:       analytics_subscriber.py
+Project:           Chlorophyll-a Soft-Sensor Edge-IoT System
+Tier / Subsystem:  Cloud Analytics Tier
+
+Description:       Subscribes to telemetry topics published by edge nodes.
+                   Consumes daily telemetry batches (aggregated 24-hour windows)
+                   and real-time WHO Alert Level 1 alarm messages. Computes
+                   rolling soft-sensor fidelity metrics (MAE, R²) and edge
+                   hardware resource statistics (inference latency, CPU, RAM),
+                   persisting summary state to edge_performance_report.json.
+
+Data Interfaces:
+  - Upstream:      MQTT topics:
+                     - sensor/water/daily_batch (QoS 1, daily telemetry array)
+                     - sensor/water/alarm (QoS 2, critical threshold alerts)
+  - Downstream:    edge_performance_report.json (local JSON analytics digest)
+  - Storage / IPC: In-memory statistical accumulators; atomic JSON write.
+
+References:        Mozo et al. (2022); WHO Guidelines for Safe Recreational
+                   Water Environments (2003).
+===============================================================================
+"""
+
 import os
 import json
 import time
@@ -20,9 +45,11 @@ all_cpu = []
 all_ram = []
 total_alarms = 0
 
+
 def generate_report():
+    """Calculates cumulative performance metrics and writes the JSON report."""
     if len(all_actual) == 0:
-        print("No data received yet.")
+        print("[INFO] [CloudSubscriber] No data received yet.")
         return
 
     mae = mean_absolute_error(all_actual, all_predicted)
@@ -61,30 +88,33 @@ def generate_report():
 
     with open(REPORT_PATH, "w") as f:
         json.dump(report, f, indent=4)
-    print(f"\n[REPORT] Generated updated performance report at {REPORT_PATH}")
+    print(f"\n[INFO] [CloudSubscriber] Generated updated performance report at {REPORT_PATH}")
     print(json.dumps(report, indent=2))
 
 
 def on_connect(client, userdata, flags, reason_code, properties):
+    """Handles MQTT broker connection and subscribes to telemetry and alarm topics."""
     if reason_code == 0:
-        print(f"Connected to Cloud MQTT Broker at {MQTT_BROKER}:{MQTT_PORT}")
+        print(f"[INFO] [CloudSubscriber] Connected to Cloud MQTT Broker at {MQTT_BROKER}:{MQTT_PORT}")
         client.subscribe(TOPIC_DAILY_BATCH)
         client.subscribe(TOPIC_ALARM)
-        print(f"Listening for daily batches on {TOPIC_DAILY_BATCH}...")
+        print(f"[INFO] [CloudSubscriber] Subscribed to {TOPIC_DAILY_BATCH} and {TOPIC_ALARM}")
     else:
-        print(f"Connection failed: {reason_code}")
+        print(f"[ERROR] [CloudSubscriber] Connection failed: {reason_code}")
+
 
 def on_message(client, userdata, msg):
+    """Processes incoming MQTT messages from edge nodes."""
     global total_alarms
 
     if msg.topic == TOPIC_ALARM:
-        print(f"\n[CLOUD] 🚨 ALARM RECEIVED: {msg.payload.decode('utf-8')}")
+        print(f"\n[ALERT] [CloudSubscriber] Alarm received: {msg.payload.decode('utf-8')}")
         total_alarms += 1
         
     elif msg.topic == TOPIC_DAILY_BATCH:
         try:
             batch = json.loads(msg.payload.decode('utf-8'))
-            print(f"\n[CLOUD] 📥 Received Daily Batch containing {len(batch)} readings.")
+            print(f"\n[INFO] [CloudSubscriber] Received daily batch containing {len(batch)} readings.")
             
             for reading in batch:
                 all_actual.append(reading["actual_chlorophyll"])
@@ -95,7 +125,8 @@ def on_message(client, userdata, msg):
                 
             generate_report()
         except Exception as e:
-            print(f"Error processing batch: {e}")
+            print(f"[ERROR] [CloudSubscriber] Error processing batch: {e}")
+
 
 if __name__ == "__main__":
     print("========================================")
@@ -112,11 +143,11 @@ if __name__ == "__main__":
             client.connect(MQTT_BROKER, MQTT_PORT, 60)
             break
         except Exception as e:
-            print(f"Waiting for broker at {MQTT_BROKER}:{MQTT_PORT}... ({e})")
+            print(f"[INFO] [CloudSubscriber] Waiting for broker at {MQTT_BROKER}:{MQTT_PORT}... ({e})")
             time.sleep(3)
     
     try:
         client.loop_forever()
     except KeyboardInterrupt:
-        print("\nShutting down Cloud Analytics...")
+        print("\n[INFO] [CloudSubscriber] Shutting down Cloud Analytics...")
         generate_report()

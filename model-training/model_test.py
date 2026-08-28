@@ -1,32 +1,46 @@
-"""This test script validates the exported edge model against sample simulation data.
+"""
+===============================================================================
+Module Name:       model_test.py
+Project:           Chlorophyll-a Soft-Sensor Edge-IoT System
+Tier / Subsystem:  Machine Learning Quality Assurance (QA)
 
-It loads the trained pipeline and doeas a quick check on  a few rows from the
-simulation dataset to confirm inference works end to end.
+Description:       Validates the exported edge soft-sensor model pipeline against
+                   the holdout simulation dataset. Simulates edge input formatting
+                   and confirms end-to-end inference execution without errors.
+
+Data Interfaces:
+  - Upstream:      edge-system/app/model.joblib
+                   edge-system/sensor-sim/data/simulation_test_data.csv
+  - Downstream:    Console validation log
+  - Storage / IPC: Local filesystem read.
+
+References:        Mozo et al. (2022).
+===============================================================================
 """
 
+import os
 import joblib
 import pandas as pd
 
 # 1. Point to the exported artifacts
-MODEL_PATH = "../edge-system/app/model.joblib"
-import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "../edge-system/app/model.joblib")
 DATA_PATH = os.path.join(BASE_DIR, "../edge-system/sensor-sim/data/simulation_test_data.csv")
 
 FEATURES = ["EXO3(Temp_C)", "EXO3(spCond_uS_cm)", "EXO3(pH)", "SystemBattery"]
 TARGET = "EXO3(Chlorophyll_ug_L)"
 
-print("Loading Edge Model and Simulation Data...")
+print("[INFO] [ModelTest] Loading Edge Model and Simulation Data...")
 try:
     edge_model = joblib.load(MODEL_PATH)
     df = pd.read_csv(DATA_PATH)
-    print("Files loaded successfully!\n")
+    print("[INFO] [ModelTest] Model and test dataset loaded successfully.\n")
 except Exception as e:
-    print(f"Error loading files: {e}")
+    print(f"[ERROR] [ModelTest] Error loading files: {e}")
     exit(1)
 
-print("Simulating Edge Inference (First 5 Rows)...")
-print("-" * 60)
+print("[INFO] [ModelTest] Simulating Edge Inference (Sample Evaluation)...")
+print("-" * 65)
 
 # Grab the first 5 rows of the test dataset
 sample_data = df.head(5)
@@ -49,5 +63,5 @@ for sample_number, (_, row) in enumerate(sample_data.iterrows(), start=1):
     print(f"  Actual:     {actual:.3f} µg/L")
     print(f"  Error:      {error:.3f} µg/L\n")
 
-print("-" * 60)
-print("QA Complete. If the script ran without crashing and predictions are reasonably close to actuals, the artifacts are valid and ready for deployment.")
+print("-" * 65)
+print("[INFO] [ModelTest] QA Validation Complete. Model pipeline executed successfully.")

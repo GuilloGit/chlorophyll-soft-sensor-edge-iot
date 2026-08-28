@@ -1,14 +1,23 @@
-"""Sensor Simulator — Reads CSV data and publishes to the local MQTT broker.
+"""
+===============================================================================
+Module Name:       sensor_reader.py
+Project:           Chlorophyll-a Soft-Sensor Edge-IoT System
+Tier / Subsystem:  Edge Telemetry Simulator (Software-in-the-Loop)
 
-This service replaces the external telemetry-sim by running on the Pi itself.
-It simulates physical sensors (I²C/ADC) by reading rows from a pre-recorded
-CSV dataset at a configurable, time-scaled interval.
+Description:       Simulates physical multi-parameter water quality probes
+                   (e.g., EXO3 sonde) by reading chronological observations
+                   from a reservoir dataset at a time-scaled interval
+                   (effective interval = nominal interval / scale factor).
+                   Publishes telemetry readings over local MQTT with QoS 1 and
+                   maintains crash-safe atomic checkpoints on disk.
 
-Features:
-    - Checkpoint-based reboot resume (atomic write to /data/checkpoint.json)
-    - Configurable time scaling (real 10-min interval compressed for testing)
-    - Graceful shutdown on SIGTERM (Docker stop)
-    - Retry loop for MQTT broker connection
+Data Interfaces:
+  - Upstream:      Historical test CSV dataset (/app/data/simulation_test_data.csv)
+  - Downstream:    MQTT topic sensor/water/raw (QoS 1)
+  - Storage / IPC: Atomic JSON checkpoint file (/data/checkpoint.json)
+
+References:        Mozo et al. (2022).
+===============================================================================
 """
 
 import os
@@ -48,9 +57,9 @@ _shutdown_requested = False
 
 
 def handle_signal(signum, frame):
-    """Handle SIGTERM/SIGINT for graceful shutdown."""
+    """Handles SIGTERM and SIGINT OS signals for graceful process termination."""
     global _shutdown_requested
-    print(f"\n[{time.strftime('%X')}] Received signal {signum}. Shutting down gracefully...")
+    print(f"\n[INFO] [SensorSim] [{time.strftime('%X')}] Received signal {signum}. Shutting down gracefully...")
     _shutdown_requested = True
 
 
@@ -60,26 +69,26 @@ signal.signal(signal.SIGINT, handle_signal)
 
 # --- CHECKPOINT MANAGEMENT ---
 def load_checkpoint() -> int:
-    """Load the last processed row index from the checkpoint file.
+    """Loads the last processed row index from the persistent checkpoint file.
     
-    Returns 0 if no checkpoint exists (fresh start).
+    Returns 0 if no checkpoint exists (fresh simulation run).
     """
     try:
         with open(CHECKPOINT_PATH, "r") as f:
             data = json.load(f)
             index = data.get("last_row_index", -1) + 1
-            print(f"  -> Checkpoint found. Resuming from row {index}.")
+            print(f"[INFO] [SensorSim] Checkpoint found. Resuming from row {index}.")
             return index
     except (FileNotFoundError, json.JSONDecodeError):
-        print("  -> No checkpoint found. Starting from row 0.")
+        print("[INFO] [SensorSim] No checkpoint found. Starting from row 0.")
         return 0
 
 
 def save_checkpoint(index: int):
-    """Atomically save the current row index to the checkpoint file.
+    """Atomically persists the current row index to the checkpoint file.
     
-    Uses write-to-temp + rename for crash safety. If the Pi loses power
-    between these two operations, the old checkpoint survives intact.
+    Employs write-to-temporary-file and atomic replace (os.replace) to
+    prevent file corruption during ungraceful shutdowns or power cuts.
     """
     checkpoint_dir = os.path.dirname(CHECKPOINT_PATH)
     try:
@@ -90,34 +99,31 @@ def save_checkpoint(index: int):
             os.fsync(f.fileno())
         os.replace(tmp_path, CHECKPOINT_PATH)
     except Exception as e:
-        print(f"  [WARN] Failed to save checkpoint: {e}")
+        print(f"[WARN] [SensorSim] Failed to save checkpoint: {e}")
 
 
 # --- MQTT SETUP ---
 def on_connect(client, userdata, flags, reason_code, properties):
+    """Callback triggered upon establishing connection to MQTT broker."""
     if reason_code == 0:
-        print(f"[{time.strftime('%X')}] Connected to broker at {MQTT_BROKER}:{MQTT_PORT}")
+        print(f"[INFO] [SensorSim] [{time.strftime('%X')}] Connected to broker at {MQTT_BROKER}:{MQTT_PORT}")
     else:
-        print(f"[{time.strftime('%X')}] Connection failed: reason_code={reason_code}")
+        print(f"[ERROR] [SensorSim] [{time.strftime('%X')}] Connection failed: reason_code={reason_code}")
 
 
 def connect_mqtt() -> mqtt.Client:
-    """Connect to the local MQTT broker with a retry loop.
-    
-    Docker Compose may start this container before Mosquitto is ready,
-    so we retry until the broker accepts connections.
-    """
+    """Connects to the local MQTT broker with a fault-tolerant retry loop."""
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     client.on_connect = on_connect
 
     while not _shutdown_requested:
         try:
-            print(f"Connecting to broker at {MQTT_BROKER}:{MQTT_PORT}...")
+            print(f"[INFO] [SensorSim] Connecting to broker at {MQTT_BROKER}:{MQTT_PORT}...")
             client.connect(MQTT_BROKER, MQTT_PORT, 60)
             client.loop_start()
             return client
         except Exception as e:
-            print(f"  Broker not ready ({e}). Retrying in 3s...")
+            print(f"[INFO] [SensorSim] Broker not ready ({e}). Retrying in 3s...")
             time.sleep(3)
 
     sys.exit(0)
@@ -125,8 +131,9 @@ def connect_mqtt() -> mqtt.Client:
 
 # --- MAIN ---
 def main():
+    """Initializes and runs the telemetry simulation streaming loop."""
     print("=" * 65)
-    print("  SENSOR SIMULATOR — On-Pi Sensor Reader")
+    print("  SENSOR SIMULATOR — Software-in-the-Loop Telemetry Stream")
     print("=" * 65)
     print(f"  Real interval:      {REAL_INTERVAL_SEC}s ({REAL_INTERVAL_SEC/60:.0f} min)")
     print(f"  Time scale factor:  {TIME_SCALE_FACTOR}x")
@@ -136,39 +143,39 @@ def main():
     print()
 
     # 1. Load dataset
-    print("1. Loading dataset...")
+    print("[INFO] [SensorSim] 1. Loading dataset...")
     try:
         df = pd.read_csv(DATASET_PATH).dropna()
-        print(f"  -> {len(df)} valid records loaded.")
+        print(f"[INFO] [SensorSim] {len(df)} valid records loaded.")
     except Exception as e:
-        print(f"  -> CRITICAL: Failed to load CSV: {e}")
+        print(f"[ERROR] [SensorSim] Failed to load CSV: {e}")
         sys.exit(1)
 
     # 2. Load checkpoint
-    print("2. Checking for reboot checkpoint...")
+    print("[INFO] [SensorSim] 2. Checking for reboot checkpoint...")
     start_index = load_checkpoint()
 
     if start_index >= len(df):
-        print(f"\n  All {len(df)} rows already processed. Simulation complete.")
-        print("  Delete /data/checkpoint.json to restart from the beginning.")
+        print(f"\n[INFO] [SensorSim] All {len(df)} rows already processed. Simulation complete.")
+        print("[INFO] [SensorSim] Remove /data/checkpoint.json to restart simulation.")
         return
 
     remaining = len(df) - start_index
-    print(f"  -> {remaining} rows remaining to process.")
+    print(f"[INFO] [SensorSim] {remaining} rows remaining to process.")
 
     # 3. Connect to broker
-    print("3. Connecting to MQTT broker...")
+    print("[INFO] [SensorSim] 3. Connecting to MQTT broker...")
     client = connect_mqtt()
 
     # Calculate hybrid "Back-in-Time" start (simplified 24h lookback)
     now = datetime.datetime.now(datetime.timezone.utc)
     virtual_time = now - datetime.timedelta(hours=24)
-    print(f"  Virtual start time: {virtual_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    print(f"[INFO] [SensorSim] Virtual start time: {virtual_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
     # 4. Publishing loop
     print(f"\n{'=' * 65}")
     print(f"  Starting sensor simulation (row {start_index} of {len(df)})...")
-    print(f"  Publishing 1 row every {EFFECTIVE_INTERVAL:.2f}s. Ctrl+C to stop.")
+    print(f"  Publishing 1 row every {EFFECTIVE_INTERVAL:.2f}s. Press Ctrl+C to terminate.")
     print(f"{'=' * 65}\n")
 
     try:
@@ -193,7 +200,7 @@ def main():
             result = client.publish(TOPIC_RAW, payload_json, qos=1)
             result.wait_for_publish()
 
-            print(f"[Row {iloc_idx:>5}/{len(df)}] {payload_dict['timestamp']}  "
+            print(f"[INFO] [SensorSim] [Row {iloc_idx:>5}/{len(df)}] {payload_dict['timestamp']}  "
                   f"Temp={payload_dict['features']['EXO3(Temp_C)']:.1f}  "
                   f"Chl_actual={payload_dict['ground_truth']:.2f}")
 
@@ -209,13 +216,13 @@ def main():
             print(f"{'=' * 65}")
 
     except KeyboardInterrupt:
-        print("\n  Stopped manually by user.")
+        print("\n[INFO] [SensorSim] Simulation stopped manually by user.")
     finally:
-        print(f"  Saving final checkpoint at row {iloc_idx}...")
+        print(f"[INFO] [SensorSim] Saving final checkpoint at row {iloc_idx}...")
         save_checkpoint(iloc_idx)
         client.loop_stop()
         client.disconnect()
-        print("  Disconnected from broker. Goodbye.")
+        print("[INFO] [SensorSim] Disconnected from MQTT broker.")
 
 
 if __name__ == "__main__":
