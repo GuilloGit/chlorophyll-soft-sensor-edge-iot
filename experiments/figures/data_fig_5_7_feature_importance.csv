@@ -1,0 +1,11 @@
+feature_name,feature_label,importance_raw,importance_percent,rank
+EXO3(pH),pH,0.422113,42.21,1
+EXO3(Temp_C),"Water
+Temperature
+(°C)",0.327186,32.72,2
+EXO3(spCond_uS_cm),"Specific
+Conductivity
+(µS/cm)",0.250701,25.07,3
+SystemBattery,"Battery
+Voltage
+(V)",0.0,0.0,4
