@@ -1,0 +1,90 @@
+"""
+===============================================================================
+Module Name:       publish_ota.py
+Project:           Chlorophyll-a Soft-Sensor Edge-IoT System
+Tier / Subsystem:  Model Management / Remote OTA Dispatcher
+
+Description:       CLI tool for dispatching remote Over-The-Air (OTA) model update
+                   commands to edge buoys over MQTT. Computes cryptographic
+                   SHA-256 checksum of the target model artifact, packages the
+                   payload with download URL and semantic version tag, and publishes
+                   with QoS 1 to buoy/ota/update.
+
+Data Interfaces:
+  - Upstream:      Local model joblib file (for hash generation)
+  - Downstream:    MQTT topic buoy/ota/update (QoS 1)
+  - Storage / IPC: Local file read.
+
+References:        Test-Before-Swap OTA fail-safe architecture.
+===============================================================================
+"""
+
+import json
+import hashlib
+import argparse
+import paho.mqtt.client as mqtt
+
+TOPIC_OTA_COMMAND = "buoy/ota/update"
+
+
+def main():
+    """Parses arguments, calculates SHA-256 hash, and dispatches OTA update payload."""
+    parser = argparse.ArgumentParser(
+        description="Publish a remote OTA update command to the edge buoy (V2 ONNX)."
+    )
+    parser.add_argument(
+        "--model", default="../edge-system/app-v2/model_v2.onnx",
+        help="Path to the local model file (used for SHA-256 computation)"
+    )
+    parser.add_argument(
+        "--url", required=True,
+        help="Model artifact download URL (e.g., GitHub Release asset link)"
+    )
+    parser.add_argument(
+        "--version", default="1.0.0",
+        help="Semantic version tag for this model release"
+    )
+    parser.add_argument(
+        "--broker", default="localhost",
+        help="MQTT broker hostname or IP (default: localhost)"
+    )
+    parser.add_argument(
+        "--port", type=int, default=1883,
+        help="MQTT broker port (default: 1883)"
+    )
+    args = parser.parse_args()
+
+    # Compute SHA-256 of the local model file
+    print(f"[INFO] [OTAPublisher] Computing SHA-256 of {args.model}...")
+    with open(args.model, "rb") as f:
+        sha = hashlib.sha256(f.read()).hexdigest()
+
+    # Build the OTA command payload
+    payload = json.dumps({
+        "url": args.url,
+        "sha256": sha,
+        "version": args.version
+    })
+
+    # Publish to the MQTT broker
+    print(f"[INFO] [OTAPublisher] Connecting to {args.broker}:{args.port}...")
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.connect(args.broker, args.port, 60)
+    client.publish(TOPIC_OTA_COMMAND, payload, qos=1)
+    client.disconnect()
+
+    print()
+    print("=" * 60)
+    print("  [INFO] [OTAPublisher] OTA Command Dispatched Successfully")
+    print("=" * 60)
+    print(f"  Broker:   {args.broker}:{args.port}")
+    print(f"  Topic:    {TOPIC_OTA_COMMAND}")
+    print(f"  Version:  {args.version}")
+    print(f"  URL:      {args.url}")
+    print(f"  SHA-256:  {sha}")
+    print("=" * 60)
+    print("[INFO] [OTAPublisher] Edge device will download, verify, and hot-swap the model.")
+
+
+if __name__ == "__main__":
+    main()
