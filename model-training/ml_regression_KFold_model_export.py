@@ -21,6 +21,8 @@ Data Interfaces:
                      - edge-system/app/model.joblib (compressed scikit-learn pipeline)
                      - edge-system/app/model_metrics.json (validation metrics)
                      - edge-system/sensor-sim/data/simulation_test_data.csv (holdout)
+                     - edge-system/app-v2/model_v2.onnx (chunked ONNX ensemble)
+                     - edge-system/app-v2/y_lambda.json (target power transform parameter)
   - Storage / IPC: Local filesystem I/O.
 
 References:        Mozo et al. (2022); Martín-Suazo et al. (2024).
@@ -191,45 +193,15 @@ os.makedirs(os.path.join(BASE_DIR, "../edge-system/sensor-sim/data"), exist_ok=T
 df_test.to_csv(simulator_csv_path, index=False)
 print(f"[INFO] [MLTraining] Deployed Test Data to: {simulator_csv_path}")
 
-print("[INFO] [MLTraining] 6. Exporting ONNX V2 Model...")
+print("[INFO] [MLTraining] 6. Exporting V2 ONNX Model (10x10 Tree Chunking)...")
 try:
-    from skl2onnx import convert_sklearn
-    from skl2onnx.common.data_types import FloatTensorType
-    from sklearn.pipeline import Pipeline
-    
-    # TransformedTargetRegressor is not natively supported by ONNX.
-    # We extract the X scaler and the inner Random Forest for the ONNX graph.
-    x_scaler = edge_pipeline.named_steps['x_scaler']
-    rf_inner = edge_pipeline.named_steps['rf_model_with_y_scaler'].regressor_
-    
-    onnx_pipeline = Pipeline([
-        ('x_scaler', x_scaler),
-        ('rf', rf_inner)
-    ])
-    
-    initial_type = [('float_input', FloatTensorType([None, 4]))]
-    onx = convert_sklearn(onnx_pipeline, initial_types=initial_type)
-    
-    onnx_dir = os.path.join(BASE_DIR, "../edge-system/app-v2")
-    os.makedirs(onnx_dir, exist_ok=True)
-    onnx_model_path = os.path.join(onnx_dir, "model_v2.onnx")
-    
-    with open(onnx_model_path, "wb") as f:
-        f.write(onx.SerializeToString())
-    print(f"[INFO] [MLTraining] Deployed V2 ONNX Model to: {onnx_model_path}")
-    
-    with open(onnx_model_path, "rb") as f:
-        onnx_sha = hashlib.sha256(f.read()).hexdigest()
-    print(f"[INFO] [MLTraining] V2 ONNX Model SHA-256: {onnx_sha}")
-    
-    # Save the Yeo-Johnson lambda for inverse transformation on the edge
-    y_lambda = float(edge_pipeline.named_steps['rf_model_with_y_scaler'].transformer_.lambdas_[0])
-    lambda_path = os.path.join(onnx_dir, "y_lambda.json")
-    with open(lambda_path, "w") as f:
-        json.dump({"y_lambda": y_lambda}, f)
-    print(f"[INFO] [MLTraining] Saved Y-Scaler lambda ({y_lambda}) to {lambda_path}")
-    
-except ImportError as e:
-    print(f"[WARNING] skl2onnx not installed or error occurred: {e}. Skipping V2 ONNX export.")
+    from export_onnx import export_chunked_onnx
+    export_chunked_onnx(
+        model_in=edge_model_path,
+        lambda_out=os.path.join(BASE_DIR, "../edge-system/app-v2/y_lambda.json"),
+        model_out=os.path.join(BASE_DIR, "../edge-system/app-v2/model_v2.onnx")
+    )
+except Exception as e:
+    print(f"[WARN] [MLTraining] V2 ONNX export skipped or failed: {e}")
 
 print("\n[INFO] [MLTraining] Export Complete! Pipeline assets deployed successfully.")

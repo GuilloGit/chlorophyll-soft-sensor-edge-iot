@@ -1,0 +1,60 @@
+{
+    "metadata": {
+        "dataset": "As Conchas Reservoir (Playa & Presa buoys)",
+        "holdout_samples": 21713,
+        "target": "EXO3(Chlorophyll_ug_L)",
+        "features": [
+            "EXO3(Temp_C)",
+            "EXO3(spCond_uS_cm)",
+            "EXO3(pH)",
+            "SystemBattery"
+        ],
+        "alarm_threshold_ug_L": 10.0,
+        "model_format": "ONNX Runtime (V2)",
+        "y_lambda": 0.02829662709583453,
+        "literature_reference": "Mozo et al. (2022) Scientific Reports"
+    },
+    "regression_holdout": {
+        "random_forest": {
+            "mae_ug_L": 2.902,
+            "mse": 16.691,
+            "rmse_ug_L": 4.086,
+            "r2": -1.142
+        },
+        "naive_mean_baseline": {
+            "mae_ug_L": 6.119,
+            "mse": 41.048,
+            "rmse_ug_L": 6.407,
+            "r2": -4.267,
+            "train_mean_value": 8.867
+        }
+    },
+    "who_alarm_classification": {
+        "random_forest": {
+            "TP": 0,
+            "FP": 0,
+            "TN": 20799,
+            "FN": 914,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1_score": 0.0,
+            "specificity": 1.0,
+            "accuracy": 0.9579,
+            "total_alarm_events_true": 914,
+            "total_alarm_events_pred": 0
+        },
+        "naive_mean_baseline": {
+            "TP": 0,
+            "FP": 0,
+            "TN": 20799,
+            "FN": 914,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1_score": 0.0,
+            "specificity": 1.0,
+            "accuracy": 0.9579,
+            "total_alarm_events_true": 914,
+            "total_alarm_events_pred": 0
+        }
+    }
+}

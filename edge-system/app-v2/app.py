@@ -1,16 +1,17 @@
 """
 ===============================================================================
-Module Name:       app.py
+Module Name:       app.py (V2 ONNX Decoupled Engine)
 Project:           Chlorophyll-a Soft-Sensor Edge-IoT System
-Tier / Subsystem:  Edge Processing Tier (Inference & Persistence Engine)
+Tier / Subsystem:  Edge Processing Tier (ONNX Runtime Inference & Persistence Engine)
 
 Description:       Receives streaming multi-parameter physicochemical telemetry,
-                   executes machine learning inference pipeline for Chlorophyll-a
-                   estimation, persists readings and hardware metrics in SQLite
-                   with Write-Ahead Logging (WAL) mode, aggregates 24-hour daily
-                   batches for low-power transmission, triggers immediate WHO
-                   Alert Level 1 alarms upon threshold exceedance, and manages
-                   remote model updates via the Test-Before-Swap OTA protocol.
+                   executes ultra-lightweight ONNX Runtime inference for
+                   Chlorophyll-a estimation, applies pure NumPy inverse power
+                   transformations (target unscaling), persists observations and
+                   hardware performance metrics in SQLite (WAL mode), aggregates
+                   24-hour daily telemetry batches, dispatches immediate WHO
+                   Alert Level 1 hazard alarms, and manages zero-downtime model
+                   hot-swapping via the Test-Before-Swap OTA protocol.
 
 Data Interfaces:
   - Upstream:      MQTT topics:
@@ -21,10 +22,11 @@ Data Interfaces:
                      - sensor/water/alarm (QoS 2, critical threshold alerts)
                      - buoy/ota/status (QoS 1, OTA deployment status notifications)
   - Storage / IPC: SQLite database with WAL journal mode (/data/sensor_data.db);
-                   Joblib serialized pipeline (/data/model.joblib).
+                   ONNX serialized model (/data/model_v2.onnx);
+                   Power transform parameter file (/app/y_lambda.json).
 
-References:        Mozo et al. (2022); WHO Guidelines for Safe Recreational
-                   Water Environments (2003).
+References:        Mozo et al. (2022); Yeo & Johnson (2000); WHO Guidelines for
+                   Safe Recreational Water Environments (2003).
 ===============================================================================
 """
 
@@ -70,6 +72,39 @@ current_batch = []
 # Thread-safe model access
 model_lock = threading.Lock()
 current_model = None  # Loaded during startup below
+
+
+def _inverse_power_transform(y_transformed: float, lmbda: float) -> float:
+    """Computes the Inverse Power Transform (Target Unscaling) using pure NumPy.
+    
+    Inverts the Yeo-Johnson non-linear power transform applied during training
+    to project normalized model predictions back into physical Chlorophyll-a
+    concentration units (µg/L):
+    
+        y = ((y_trans * lambda + 1)^(1 / lambda) - 1)   if y_trans >= 0, lambda != 0
+        y = exp(y_trans) - 1                            if y_trans >= 0, lambda == 0
+        y = 1 - (1 - (2 - lambda) * y_trans)^(1 / (2 - lambda)) if y_trans < 0, lambda != 2
+        y = 1 - exp(-y_trans)                           if y_trans < 0, lambda == 2
+        
+    Args:
+        y_transformed: Transformed scalar prediction from the ONNX graph.
+        lmbda: Learned power transformation parameter (lambda) from y_lambda.json.
+        
+    Returns:
+        Unscaled physical Chlorophyll-a concentration in µg/L.
+    """
+    if y_transformed >= 0:
+        if lmbda == 0.0:
+            return float(np.exp(y_transformed) - 1.0)
+        return float(np.power(y_transformed * lmbda + 1.0, 1.0 / lmbda) - 1.0)
+    else:
+        if lmbda == 2.0:
+            return float(1.0 - np.exp(-y_transformed))
+        return float(1.0 - np.power(1.0 - (2.0 - lmbda) * y_transformed, 1.0 / (2.0 - lmbda)))
+
+
+# Backward compatibility alias
+_inverse_yeo_johnson = _inverse_power_transform
 
 
 # --- DATABASE SETUP ---
@@ -157,29 +192,33 @@ def store_reading(conn: sqlite3.Connection, timestamp: str, features: dict,
 
 
 # --- MODEL LOADING ---
-def load_initial_model():
-    """Load the ML model, copying the baked-in image to the persistent volume if needed.
+def load_initial_model() -> rt.InferenceSession:
+    """Loads the ONNX inference model, copying the baked image to persistent storage if needed.
     
-    When MODEL_PATH points to a persistent volume (e.g. /data/model_v2.onnx),
+    When MODEL_PATH points to a persistent Docker volume (/data/model_v2.onnx),
     the Dockerfile-baked model serves as the initial fallback. This function
-    copies it to the volume on first boot so OTA updates persist across
-    container rebuilds.
+    copies it to persistent storage on initial boot so that subsequent OTA
+    updates survive container rebuilds.
+    
+    Critically, this function configures restrictive single-threaded SessionOptions
+    (intra_op_num_threads=1, inter_op_num_threads=1) to suppress OpenMP active
+    waiting (spin-locking), which would otherwise cause an idle CPU consumption spike.
     """
     if not os.path.exists(MODEL_PATH) and MODEL_PATH != BAKED_MODEL_PATH:
         if os.path.exists(BAKED_MODEL_PATH):
-            print(f"  -> First boot: copying baked model to {MODEL_PATH}")
+            print(f"[INFO] [InferenceEngineV2] First boot: copying baked model to {MODEL_PATH}")
             shutil.copy2(BAKED_MODEL_PATH, MODEL_PATH)
         else:
-            print(f"  -> CRITICAL: No model found at {MODEL_PATH} or {BAKED_MODEL_PATH}")
+            print(f"[ERROR] [InferenceEngineV2] Critical: No model found at {MODEL_PATH} or {BAKED_MODEL_PATH}")
             exit(1)
 
     global Y_LAMBDA
     try:
         with open(LAMBDA_PATH, "r") as f:
             Y_LAMBDA = float(json.load(f).get("y_lambda", 0.0))
-        print(f"  -> Y_LAMBDA loaded: {Y_LAMBDA}")
+        print(f"[INFO] [InferenceEngineV2] Power transform lambda loaded: {Y_LAMBDA}")
     except Exception as e:
-        print(f"  -> WARNING: Failed to load Y_LAMBDA from {LAMBDA_PATH}: {e}")
+        print(f"[WARN] [InferenceEngineV2] Failed to load Y_LAMBDA from {LAMBDA_PATH}: {e}")
 
     sess_options = rt.SessionOptions()
     sess_options.intra_op_num_threads = 1
@@ -187,33 +226,33 @@ def load_initial_model():
     return rt.InferenceSession(MODEL_PATH, sess_options=sess_options, providers=['CPUExecutionProvider'])
 
 print("=" * 65)
-print("  EDGE INFERENCE ENGINE (with OTA)")
+print("  EDGE INFERENCE ENGINE V2 (ONNX Decoupled Runtime)")
 print("=" * 65)
 
-print("\n1. Loading ML Pipeline...")
+print("\n1. Loading ONNX Pipeline...")
 try:
     current_model = load_initial_model()
-    print(f"  -> Pipeline loaded from {MODEL_PATH}")
+    print(f"[INFO] [InferenceEngineV2] Pipeline loaded from {MODEL_PATH}")
 except Exception as e:
-    print(f"  -> CRITICAL: Failed to load model: {e}")
+    print(f"[ERROR] [InferenceEngineV2] Critical failure loading model: {e}")
     exit(1)
 
 print("\n2. Initializing SQLite Database...")
 db_conn = init_database(DB_PATH)
-print(f"  -> Database at {DB_PATH} (WAL mode enabled)")
+print(f"[INFO] [InferenceEngineV2] Database at {DB_PATH} (WAL mode enabled)")
 print_db_stats(db_conn)
 
 
 # --- OTA UPDATE HANDLER ---
-def _handle_ota_update(client, payload):
-    """Test-Before-Swap OTA: download → hash → trial-load → hot-swap → persist.
+def _handle_ota_update(client: mqtt.Client, payload: dict) -> None:
+    """Executes the Test-Before-Swap fail-safe OTA update protocol for ONNX models.
     
-    This is the core fail-safe mechanism:
-    1. Download the new model to a temporary file
-    2. Verify the SHA-256 hash matches the expected value
-    3. Trial-load the model into a dummy variable (catches corrupt files)
-    4. Acquire the model lock and swap the in-memory reference
-    5. Atomically replace the on-disk model (survives reboots)
+    1. Downloads candidate ONNX model artifact to a temporary staging file.
+    2. Verifies cryptographic SHA-256 hash against payload expectation.
+    3. Trial-loads candidate model into an isolated InferenceSession to catch corrupt binaries.
+    4. Acquires model_lock and hot-swaps in-memory model reference without restarting container.
+    5. Atomically replaces persistent disk file via os.replace.
+    6. Dispatches status confirmation packet to buoy/ota/status.
     """
     global current_model
 
@@ -222,64 +261,63 @@ def _handle_ota_update(client, payload):
     version = payload.get("version", "unknown")
 
     if not url or not expected_hash:
-        print("[OTA] Invalid payload: missing 'url' or 'sha256'. Aborting.")
+        print("[WARN] [OTAManager] Invalid payload: missing 'url' or 'sha256'. Aborting update.")
         return
 
-    print(f"[OTA] Update received — version={version}")
-    print(f"[OTA] Downloading from: {url}")
+    print(f"[INFO] [OTAManager] Remote update command received (target version: {version})")
+    print(f"[INFO] [OTAManager] Downloading artifact from: {url}")
 
-    # 1. Download to a temporary file
+    # 1. Download to temporary staging file
     try:
         response = requests.get(url, timeout=300)
         response.raise_for_status()
     except Exception as e:
-        print(f"[OTA] Download failed: {e}. Aborting.")
+        print(f"[ERROR] [OTAManager] Download failed: {e}. Aborting update.")
         _publish_ota_status(client, version, "failed", f"Download error: {e}")
         return
 
     with open(TEMP_MODEL_PATH, "wb") as f:
         f.write(response.content)
 
-    print(f"[OTA] Downloaded {len(response.content)} bytes.")
+    print(f"[INFO] [OTAManager] Downloaded {len(response.content):,} bytes to staging buffer.")
 
-    # 2. Verify SHA-256
+    # 2. Verify SHA-256 Checksum
     actual_hash = hashlib.sha256(response.content).hexdigest()
     if actual_hash != expected_hash:
-        print(f"[OTA] Hash mismatch! Expected: {expected_hash[:16]}... "
-              f"Got: {actual_hash[:16]}... Aborting.")
+        print(f"[ERROR] [OTAManager] SHA-256 mismatch! Expected {expected_hash[:16]}..., got {actual_hash[:16]}... Aborting.")
         os.remove(TEMP_MODEL_PATH)
         _publish_ota_status(client, version, "failed", "Hash mismatch")
         return
 
-    print("[INFO] [OTAManager] SHA-256 verified successfully.")
+    print("[INFO] [OTAManager] SHA-256 checksum verified successfully.")
 
-    # 3. Trial-load (the ultimate fail-safe)
+    # 3. Trial-load candidate model in isolated session
     try:
         sess_options = rt.SessionOptions()
         sess_options.intra_op_num_threads = 1
         sess_options.inter_op_num_threads = 1
         new_model = rt.InferenceSession(TEMP_MODEL_PATH, sess_options=sess_options, providers=['CPUExecutionProvider'])
     except Exception as e:
-        print(f"[OTA] Model corrupted or incompatible: {e}. Aborting.")
+        print(f"[ERROR] [OTAManager] Model deserialization error: {e}. Aborting hot-swap.")
         os.remove(TEMP_MODEL_PATH)
         _publish_ota_status(client, version, "failed", f"Load error: {e}")
         return
 
-    print("[INFO] [OTAManager] Trial-load completed successfully.")
+    print("[INFO] [OTAManager] Trial-load verification passed successfully.")
 
-    # 4. Hot-swap in memory (thread-safe)
+    # 4. Thread-safe in-memory reference swap
     with model_lock:
         current_model = new_model
 
-    # 5. Persist atomically to disk (survives reboots)
+    # 5. Atomic persistence to disk
     os.replace(TEMP_MODEL_PATH, MODEL_PATH)
 
-    print(f"[INFO] [OTAManager] Update successful: Version {version} is now active and persisted.")
+    print(f"[INFO] [OTAManager] Update completed: Version {version} active and persisted.")
     _publish_ota_status(client, version, "success", "Model updated")
 
 
-def _publish_ota_status(client, version, status, message):
-    """Publish OTA update status for confirmation."""
+def _publish_ota_status(client: mqtt.Client, version: str, status: str, message: str) -> None:
+    """Publishes OTA update result confirmation packet to the broker."""
     status_payload = json.dumps({
         "version": version,
         "status": status,
@@ -289,23 +327,20 @@ def _publish_ota_status(client, version, status, message):
     client.publish(TOPIC_OTA_STATUS, status_payload, qos=1)
 
 
-# (System monitoring thread removed in favor of polling during inference for batching)
-
-
 # --- MQTT CALLBACKS (Single client, dispatched by topic) ---
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
-        print(f"\n  Connected to broker! Subscribing to topics...")
+        print("\n[INFO] [MQTTClient] Connected to broker. Subscribing to topics:")
         client.subscribe(TOPIC_RAW, qos=1)
         client.subscribe(TOPIC_OTA_COMMAND, qos=1)
-        print(f"    → {TOPIC_RAW} (sensor data)")
-        print(f"    → {TOPIC_OTA_COMMAND} (OTA commands)\n")
+        print(f"  -> {TOPIC_RAW} (telemetry stream, QoS 1)")
+        print(f"  -> {TOPIC_OTA_COMMAND} (OTA command stream, QoS 1)\n")
     else:
-        print(f"  Connection failed: reason_code={reason_code}")
+        print(f"[ERROR] [MQTTClient] Broker connection failed with reason_code={reason_code}")
 
 
 def on_message(client, userdata, msg):
-    """Dispatch incoming messages by topic."""
+    """Dispatches incoming MQTT messages by topic."""
     if msg.topic == TOPIC_RAW:
         _handle_sensor_reading(client, msg)
     elif msg.topic == TOPIC_OTA_COMMAND:
@@ -313,10 +348,10 @@ def on_message(client, userdata, msg):
 
 
 def _handle_sensor_reading(client, msg):
-    """Process an incoming sensor reading: parse → infer → store → batch publish."""
+    """Processes an incoming telemetry reading: parse -> infer -> store -> batch publish."""
     global current_batch
     try:
-        # --- Parse ---
+        # --- Parse Telemetry Payload ---
         payload = json.loads(msg.payload.decode("utf-8"))
         features = payload.get("features", {})
         ground_truth = payload.get("ground_truth", 0.0)
@@ -325,7 +360,7 @@ def _handle_sensor_reading(client, msg):
         # --- Inference (timed, thread-safe) ---
         t0 = time.perf_counter()
         
-        # Convert features to a 1x4 float32 numpy array
+        # Convert physical surrogate features to 1x4 float32 array
         input_data = np.array([[
             features.get("EXO3(Temp_C)", 0.0), 
             features.get("EXO3(spCond_uS_cm)", 0.0),
@@ -338,29 +373,21 @@ def _handle_sensor_reading(client, msg):
             label_name = current_model.get_outputs()[0].name
             pred_transformed = float(current_model.run([label_name], {input_name: input_data})[0][0])
             
-        # Yeo-Johnson inverse transform using the pre-calculated lambda
-        if pred_transformed >= 0:
-            if Y_LAMBDA == 0:
-                prediction = float(np.exp(pred_transformed) - 1)
-            else:
-                prediction = float(np.power(pred_transformed * Y_LAMBDA + 1, 1 / Y_LAMBDA) - 1)
-        else:
-            if Y_LAMBDA == 2:
-                prediction = float(1 - np.exp(-pred_transformed))
-            else:
-                prediction = float(1 - np.power(1 - (2 - Y_LAMBDA) * pred_transformed, 1 / (2 - Y_LAMBDA)))
+        # Target unscaling via inverse power transform (enforcing non-negative concentration)
+        raw_prediction = _inverse_power_transform(pred_transformed, Y_LAMBDA)
+        prediction = max(0.0, raw_prediction)
             
         inference_ms = float((time.perf_counter() - t0) * 1000)
         
-        # --- System Metrics ---
+        # --- System Hardware Metrics ---
         cpu_usage = float(psutil.cpu_percent())
         ram_mb = float(psutil.virtual_memory().used / (1024 * 1024))
 
-        # --- Alarm check ---
+        # --- WHO Alert Level 1 Evaluation ---
         alarm = bool(prediction >= ALARM_THRESHOLD)
         alarm_flag = "[ALERT] [WHO-Level-1]" if alarm else "[NORMAL]"
 
-        # --- Store in DB (timed) ---
+        # --- SQLite WAL Persistence (timed) ---
         t1 = time.perf_counter()
         db_conn.execute(
             "INSERT INTO system_metrics (timestamp, cpu_percent, ram_mb) VALUES (?, ?, ?)",
@@ -372,7 +399,7 @@ def _handle_sensor_reading(client, msg):
         store_reading(db_conn, timestamp, features, prediction,
                       float(ground_truth), alarm, inference_ms, db_write_ms)
 
-        # --- Batching Logic ---
+        # --- 24-Hour Smart Batching ---
         reading_data = {
             "timestamp": str(timestamp),
             "predicted_chlorophyll": round(float(prediction), 3),
@@ -389,13 +416,12 @@ def _handle_sensor_reading(client, msg):
             batch_size = len(current_batch)
             
             if batch_size >= BATCH_SIZE:
-                # Publish the entire batch
                 batch_payload = json.dumps(current_batch)
                 client.publish(TOPIC_DAILY_BATCH, batch_payload, qos=1)
-                print(f"  [INFO] [InferenceEngine] Published daily batch of {batch_size} readings to {TOPIC_DAILY_BATCH}")
+                print(f"[INFO] [InferenceEngineV2] Published 24-hour daily batch ({batch_size} samples) to {TOPIC_DAILY_BATCH}")
                 current_batch = []
 
-        # --- Publish alarm (Immediate override) ---
+        # --- Immediate WHO Hazard Alarm Bypass ---
         if alarm:
             alarm_payload = json.dumps({
                 "timestamp": str(timestamp),
@@ -404,7 +430,7 @@ def _handle_sensor_reading(client, msg):
                 "level": "WHO_LEVEL_1"
             })
             client.publish(TOPIC_ALARM, alarm_payload, qos=2)
-            print(f"  [ALERT] [InferenceEngine] Published ALARM immediately to {TOPIC_ALARM}")
+            print(f"[ALERT] [InferenceEngineV2] Published critical ALARM packet immediately to {TOPIC_ALARM}")
 
         # --- Log ---
         print(f"[{timestamp}] (Batch: {batch_size}/{BATCH_SIZE})")

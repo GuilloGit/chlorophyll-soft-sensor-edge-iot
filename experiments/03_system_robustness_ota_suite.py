@@ -321,7 +321,7 @@ def run_robustness_suite():
     # Save JSON Results
     results_payload = {
         "metadata": {
-            "test_suite": "Chapter 5 System Robustness and OTA Reliability",
+            "test_suite": "Edge System Robustness and OTA Reliability",
             "total_tests": len(test_results),
             "passed_tests": sum(1 for t in test_results if t["status"] == "PASSED"),
             "failed_tests": sum(1 for t in test_results if t["status"] == "FAILED"),

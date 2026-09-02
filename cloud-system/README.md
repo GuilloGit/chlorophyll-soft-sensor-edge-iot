@@ -36,6 +36,13 @@ flowchart TD
 3. **Cumulative Statistical Tracking**: Aggregates continuous regression accuracy (Mean Absolute Error, Coefficient of Determination $R^2$) and edge hardware resource profiles (Inference latency, CPU utilization %, and RAM memory footprint).
 4. **State Persistence**: Generates and continuously updates `edge_performance_report.json`, serving as a machine-readable summary digest for dashboard integration or alerting pipelines.
 
+> [!NOTE]
+> **Edge Topology Interoperability (V1 & V2)**: `analytics_subscriber.py` is 100% contractually interoperable with both edge inference engines:
+> * **V1 Scikit-Learn Baseline** (`edge-system/app/main.py`): Ingests telemetry reflecting ~27.8 ms execution latency and ~381 MB memory footprint.
+> * **V2 Decoupled ONNX Runtime** (`edge-system/app-v2/app.py`): Ingests identical JSON schemas reflecting ~1.02 ms execution latency and ~12.2 MB memory footprint.
+> Zero modifications or configuration changes are required on the cloud subscriber when migrating edge nodes between V1 and V2.
+
+
 ---
 
 ## Installation & Execution

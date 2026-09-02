@@ -1,0 +1,4 @@
+Metric,Edge_Smart_Batching,Cloud_Continuous_4G,Savings_Pct
+Cellular Modem Energy (kJ),4.35,130.32,96.66
+Total Daily System Energy (Wh),66.01,101.0,34.65
+Compute Inference Energy (kJ),0.0004,0.0,N/A

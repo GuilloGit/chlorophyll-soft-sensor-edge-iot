@@ -1,0 +1,6 @@
+model.joblib
+model.joblib.tmp
+__pycache__
+*.pyc
+sensor_data.db
+checkpoint.json

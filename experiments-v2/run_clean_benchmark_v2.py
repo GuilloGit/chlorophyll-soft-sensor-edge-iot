@@ -38,14 +38,16 @@ PYTHON_EXE = sys.executable
 V2_CONTAINER_NAME = "edge_inference_app_v2"
 
 
-def run_command(cmd_list, desc=""):
+def run_command(cmd_list: list, desc: str = "") -> subprocess.CompletedProcess:
+    """Executes a system shell command with structured logging and error capture."""
     if desc:
-        print(f"\n>>> {desc}")
-    print(f"Executing: {' '.join(cmd_list)}")
+        print(f"\n[INFO] [BenchmarkV2] {desc}")
+    print(f"[INFO] [BenchmarkV2] Command: {' '.join(cmd_list)}")
     res = subprocess.run(cmd_list, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if res.returncode != 0:
-        print(f"[WARN/ERR] Return code: {res.returncode}")
-        print(f"Stderr: {res.stderr}")
+        print(f"[WARN] [BenchmarkV2] Command exited with code {res.returncode}")
+        if res.stderr:
+            print(f"[ERROR] [BenchmarkV2] Stderr: {res.stderr.strip()}")
     return res
 
 

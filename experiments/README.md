@@ -1,6 +1,10 @@
 # Empirical Validation & Benchmarking Suite (`experiments`)
 
-This subsystem contains the automated testing, hardware profiling, and performance evaluation testbench for the Chlorophyll-a Soft-Sensor Edge-IoT System. It provides repeatable, script-driven validation of soft-sensor prediction fidelity, edge computational resource consumption, cellular energy trade-offs, and system resilience under adverse operating conditions.
+This subsystem contains the automated testing, hardware profiling, and performance evaluation testbench for the Chlorophyll-a Soft-Sensor Edge-IoT System (V1 Baseline). It provides repeatable, script-driven validation of soft-sensor prediction fidelity, edge computational resource consumption, cellular energy trade-offs, and system resilience under adverse operating conditions.
+
+> [!NOTE]
+> **V1 Baseline vs. V2 ONNX Benchmarking**: This directory evaluates the initial **V1 Scikit-Learn Monolithic Pipeline** (`edge-system/app/main.py`). For the decoupled, high-performance **V2 ONNX Runtime Pipeline** (`edge-system/app-v2/app.py`) featuring 27.2× faster inference (1.02 ms vs. 27.76 ms) and 97% RAM reduction (12.2 MB vs. 381 MB), refer to the companion benchmarking suite in [experiments-v2](../experiments-v2/README.md).
+
 
 ```mermaid
 flowchart TD

@@ -23,21 +23,35 @@ wheels/
 .installed.cfg
 *.egg
 
-# IDE
+# IDE & AI Assistant
 .vscode/
 .idea/
+.github/copilot-instructions.md
 *.swp
 *.swo
 *~
 .DS_Store
 
+# Thesis & Manuscript (Private repository)
+[Tt]hesis*/
+[Tt]hesis docs/
+
 # Data & Models
 model-training/data/
 model-training/models/*.joblib
 model-training/models/*.pkl
+model-training/models/*.onnx
 edge-system/app/model.joblib
 edge-system/app/model.joblib.tmp
+edge-system/app/*.onnx
 edge-system/sensor-sim/data/
+edge-system/app-v2/model.joblib
+edge-system/app-v2/model.joblib.tmp
+edge-system/app-v2/model_v2.onnx
+edge-system/app-v2/*.onnx
+*.onnx
+*.joblib
+
 
 # SQLite
 *.db

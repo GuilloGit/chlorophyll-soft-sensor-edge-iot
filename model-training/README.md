@@ -1,6 +1,10 @@
 # Machine Learning Workstation Tier (`model-training`)
 
-The **Machine Learning Workstation Tier** encompasses offline model training, hyperparameter validation, sequential temporal cross-validation, edge-ready model compression, and remote Over-The-Air (OTA) deployment utilities for the Chlorophyll-a soft-sensor.
+The **Machine Learning Workstation Tier** encompasses offline model training, hyperparameter validation, sequential temporal cross-validation, edge-ready model compression, ONNX graph decomposition and tree chunking, and remote Over-The-Air (OTA) deployment utilities for the Chlorophyll-a soft-sensor.
+
+The tier produces artifacts for both runtime architectures:
+* **V1 Scikit-Learn Baseline**: Exported as a serialized Joblib pipeline (`model.joblib`).
+* **V2 ONNX Production Engine**: Exported via 10x10 tree chunking to an optimized ONNX graph (`model_v2.onnx`) with decoupled target power unscaling parameters (`y_lambda.json`).
 
 ---
 
@@ -58,6 +62,34 @@ flowchart LR
 
 ---
 
+## V2 ONNX Graph Decomposition & Tree Chunking (`export_onnx.py`)
+
+Deploying Scikit-Learn pipelines on resource-constrained edge single-board computers introduces significant overhead (~2.4 GB RAM, 1.2 GB container images). To enable lightweight C++ runtime deployment:
+
+1. **Decomposition**: `export_onnx.py` separates the input `PowerTransformer` from the inner `RandomForestRegressor`.
+2. **Target Unscaling Parameter Extraction**: The learned Yeo-Johnson $\lambda$ parameter ($\lambda \approx 0.0283$) is extracted to `edge-system/app-v2/y_lambda.json`, enabling pure NumPy inverse power transformation (target unscaling) on the edge without Scikit-Learn dependencies.
+3. **10x10 Tree Chunking with `Sum` Node**: Converting a 100-tree Random Forest directly into a single ONNX `TreeEnsembleRegressor` node frequently triggers serialization limits and produces unstable memory allocations on embedded runtimes. `export_onnx.py` splits the ensemble into 10 chunks of 10 trees each, scales target weights by $0.1$ ($1/10$), and aggregates the sub-outputs using an ONNX `Sum` node:
+
+```mermaid
+flowchart TD
+    INPUT["4 Physical Features [None, 4]"] --> SCALER["ONNX PowerTransformer (x_scaler)"]
+    SCALER --> C0["TreeEnsemble Chunk 0 (Trees 0-9, w*0.1)"]
+    SCALER --> C1["TreeEnsemble Chunk 1 (Trees 10-19, w*0.1)"]
+    SCALER --> C2["TreeEnsemble Chunk ..."]
+    SCALER --> C9["TreeEnsemble Chunk 9 (Trees 90-99, w*0.1)"]
+
+    C0 --> SUM["ONNX 'Sum' Node"]
+    C1 --> SUM
+    C2 --> SUM
+    C9 --> SUM
+
+    SUM --> Y_TRANS["Transformed Prediction (y_trans)"]
+    Y_TRANS --> NUMPY["Pure NumPy Target Unscaling (y_lambda.json)"]
+    NUMPY --> Y_FINAL["Physical Chlorophyll-a (µg/L)"]
+```
+
+---
+
 ## Feature Dictionary
 
 The soft-sensor relies exclusively on low-cost physical variables readily measurable by durable electrodes:
@@ -88,28 +120,35 @@ source venv/bin/activate       # On Linux/macOS
 pip install -r requirements.txt
 ```
 
-### 2. Model Training & Asset Export
-Executes sequential 10-fold cross-validation, trains the production pipeline, exports the compressed model, saves validation metrics, and writes the test dataset:
+### 2. Model Training & Asset Export (V1 & V2)
+Executes sequential 10-fold cross-validation, fits the production pipeline, exports the compressed Joblib model, generates test data, and triggers chunked ONNX export:
 
 ```bash
 python ml_regression_KFold_model_export.py
 ```
 
 **Generated Artifacts:**
-* `edge-system/app/model.joblib`: Serialized Scikit-Learn pipeline compressed with `joblib.dump(..., compress=3)` (lightweight disk footprint of ~415 MB uncompressed, compressed to optimize I/O on embedded flash storage).
+* `edge-system/app/model.joblib`: Serialized Scikit-Learn pipeline compressed with `compress=3`.
 * `edge-system/app/model_metrics.json`: Cross-validation and holdout validation metrics.
 * `edge-system/sensor-sim/data/simulation_test_data.csv`: Unseen chronological test data.
+* `edge-system/app-v2/model_v2.onnx`: Chunked 10x10 ONNX ensemble (~535 KB).
+* `edge-system/app-v2/y_lambda.json`: Power transform parameter ($\lambda$).
 
-### 3. Model QA Validation
+### 3. Dedicated ONNX Conversion (Optional)
+To independently re-export the ONNX model from an existing `model.joblib`:
+```bash
+python export_onnx.py
+```
+
+### 4. Local Model QA Validation
 Verifies that the exported `model.joblib` loads properly and computes accurate sample predictions against the test dataset:
-
 ```bash
 python model_test.py
 ```
 
-### 4. Over-The-Air (OTA) Model Deployment
-Dispatches a remote model update command over MQTT to target edge devices:
+### 5. Over-The-Air (OTA) Model Deployment CLI
 
+#### Deploy V1 Joblib Model:
 ```bash
 python publish_ota.py \
     --model ../edge-system/app/model.joblib \
@@ -119,7 +158,17 @@ python publish_ota.py \
     --port 1883
 ```
 
-The script calculates the SHA-256 hash of the local file, builds the JSON command payload, publishes it to `buoy/ota/update` with QoS 1, and disconnects.
+#### Deploy V2 ONNX Model:
+```bash
+python publish_ota_v2.py \
+    --model ../edge-system/app-v2/model_v2.onnx \
+    --url https://github.com/org/repo/releases/download/v2.0.0/model_v2.onnx \
+    --version 2.0.0 \
+    --broker 192.168.1.100 \
+    --port 1883
+```
+
+Both scripts calculate the SHA-256 hash of the local binary, format the JSON command payload, and publish to `buoy/ota/update` with QoS 1.
 
 ---
 
@@ -127,4 +176,5 @@ The script calculates the SHA-256 hash of the local file, builds the JSON comman
 
 1. **Mozo, A., Morón-López, J., Vakaruk, S., Pompa-Pernía, A. G., González-Prieto, A., Aguilar, J. A. P., Gómez-Canaval, S., & Ortiz, J. M.** (2022). *Chlorophyll soft-sensor based on machine learning models for algal bloom predictions.* Scientific Reports, 12(1), 13529. [https://doi.org/10.1038/s41598-022-17299-5](https://doi.org/10.1038/s41598-022-17299-5)
 2. **Martín-Suazo, S., Morón-López, J., Mozo, A., & Ortiz, J. M.** (2024). *Deep learning methods for multi-horizon long-term forecasting of Harmful Algal Blooms.* Knowledge-Based Systems, 301, 112279. [https://doi.org/10.1016/j.knosys.2024.112279](https://doi.org/10.1016/j.knosys.2024.112279)
-3. **Pedregosa, F., et al.** (2011). *Scikit-learn: Machine Learning in Python.* Journal of Machine Learning Research, 12, 2825–2830.
+3. **Yeo, I. K., & Johnson, R. A.** (2000). *A new family of power transformations to improve normality or symmetry.* Biometrika, 87(4), 954–959.
+4. **Pedregosa, F., et al.** (2011). *Scikit-learn: Machine Learning in Python.* Journal of Machine Learning Research, 12, 2825–2830.

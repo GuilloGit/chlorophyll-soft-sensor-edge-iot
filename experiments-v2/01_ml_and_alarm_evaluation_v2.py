@@ -35,6 +35,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import sqlite3
 import onnxruntime as rt
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, confusion_matrix
 
@@ -45,6 +46,7 @@ MODEL_PATH = os.path.join(PROJECT_ROOT, "edge-system/app-v2/model_v2.onnx")
 LAMBDA_PATH = os.path.join(PROJECT_ROOT, "edge-system/app-v2/y_lambda.json")
 TEST_DATA_PATH = os.path.join(PROJECT_ROOT, "edge-system/sensor-sim/data/simulation_test_data.csv")
 TRAIN_DATA_PATH = os.path.join(PROJECT_ROOT, "model-training/data/Playa_UPM_resampled_24H_1H.csv")
+CLEAN_DB_PATH = os.path.join(SCRIPT_DIR, "clean_run_data.db")
 FIGURES_DIR = os.path.join(SCRIPT_DIR, "figures")
 os.makedirs(FIGURES_DIR, exist_ok=True)
 
@@ -84,16 +86,10 @@ def run_evaluation():
     print("  01 — ML SOFT-SENSOR & WHO ALARM BENCHMARK (V2 ONNX)")
     print("=" * 65)
 
-    # 1. Load ONNX Model and Yeo-Johnson Lambda
-    print("\n1. Loading V2 ONNX Model and Holdout Dataset...")
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(f"Missing ONNX model: {MODEL_PATH}")
+    # 1. Load Ground Truth and Yeo-Johnson Lambda
+    print("\n1. Loading V2 Holdout Dataset and Parameters...")
     if not os.path.exists(TEST_DATA_PATH):
         raise FileNotFoundError(f"Missing test data: {TEST_DATA_PATH}")
-
-    session = rt.InferenceSession(MODEL_PATH, providers=['CPUExecutionProvider'])
-    input_name = session.get_inputs()[0].name
-    label_name = session.get_outputs()[0].name
 
     # Load Yeo-Johnson lambda
     y_lambda = 0.0
@@ -105,17 +101,46 @@ def run_evaluation():
         print(f"  -> WARNING: {LAMBDA_PATH} not found. Using lambda=0 (log transform).")
 
     df_test = pd.read_csv(TEST_DATA_PATH).dropna()
-    print(f"  -> ONNX model loaded from: {MODEL_PATH}")
     print(f"  -> Holdout samples:  {len(df_test):,}")
 
-    X_test = df_test[FEATURES].values.astype(np.float32)
     y_true = df_test[TARGET].values
 
-    # 2. Compute V2 ONNX Predictions with Manual Yeo-Johnson Inverse
-    print("\n2. Executing V2 ONNX Inference on Holdout...")
-    y_pred_transformed = session.run([label_name], {input_name: X_test})[0].flatten()
-    y_pred_rf = _inverse_yeo_johnson(y_pred_transformed, y_lambda)
-    y_pred_rf = np.maximum(0.0, y_pred_rf)  # Biological constraint: Chl-a cannot be negative
+    # 2. Obtain V2 ONNX Predictions
+    # Check if real edge execution telemetry is available in clean_run_data.db from Raspberry Pi
+    edge_db_loaded = False
+    if os.path.exists(CLEAN_DB_PATH):
+        try:
+            conn = sqlite3.connect(CLEAN_DB_PATH)
+            df_edge = pd.read_sql_query("SELECT chlorophyll_actual, chlorophyll_predicted FROM readings ORDER BY id ASC", conn)
+            conn.close()
+            if len(df_edge) == len(df_test):
+                y_true = df_edge["chlorophyll_actual"].values
+                y_pred_rf = np.maximum(0.0, df_edge["chlorophyll_predicted"].values)
+                edge_db_loaded = True
+                print(f"  -> Successfully loaded all {len(y_true):,} empirical predictions from Raspberry Pi 4 SQLite WAL database ({CLEAN_DB_PATH})")
+        except Exception as e:
+            print(f"  -> [WARN] Could not load from edge DB: {e}")
+
+    if not edge_db_loaded:
+        print(f"\n2. Executing V2 ONNX Inference on Holdout via ONNX Runtime...")
+        if not os.path.exists(MODEL_PATH):
+            raise FileNotFoundError(f"Missing ONNX model: {MODEL_PATH}")
+        session = rt.InferenceSession(MODEL_PATH, providers=['CPUExecutionProvider'])
+        input_name = session.get_inputs()[0].name
+        label_name = session.get_outputs()[0].name
+        print(f"  -> ONNX model loaded from: {MODEL_PATH}")
+
+        X_test = df_test[FEATURES].values.astype(np.float32)
+        # Run mini-batches of 1000 to avoid CPU cache thrashing
+        preds = []
+        batch_size = 1000
+        for b_start in range(0, len(X_test), batch_size):
+            b_end = min(b_start + batch_size, len(X_test))
+            b_out = session.run([label_name], {input_name: X_test[b_start:b_end]})[0].flatten()
+            preds.extend(b_out)
+        y_pred_transformed = np.array(preds)
+        y_pred_rf = _inverse_yeo_johnson(y_pred_transformed, y_lambda)
+        y_pred_rf = np.maximum(0.0, y_pred_rf)  # Biological constraint: Chl-a cannot be negative
 
     # 3. Compute Naive Mean Predictor Baseline (from Training Data)
     print("\n3. Computing Naive Mean Baseline...")

@@ -1,19 +1,20 @@
 """
 ===============================================================================
-Module Name:       publish_ota.py
+Module Name:       publish_ota_v2.py
 Project:           Chlorophyll-a Soft-Sensor Edge-IoT System
-Tier / Subsystem:  Model Management / Remote OTA Dispatcher
+Tier / Subsystem:  Model Management / Remote OTA Dispatcher (V2 ONNX)
 
 Description:       CLI tool for dispatching remote Over-The-Air (OTA) model update
-                   commands to edge buoys over MQTT. Computes cryptographic
-                   SHA-256 checksum of the target model artifact, packages the
-                   payload with download URL and semantic version tag, and publishes
-                   with QoS 1 to buoy/ota/update.
+                   commands to edge buoys running the V2 ONNX architecture over
+                   MQTT. Computes the cryptographic SHA-256 checksum of the target
+                   ONNX model artifact, packages the payload with download URL
+                   and semantic version tag, and publishes with QoS 1 to
+                   buoy/ota/update.
 
 Data Interfaces:
-  - Upstream:      Local model joblib file (for hash generation)
+  - Upstream:      Local ONNX model file (edge-system/app-v2/model_v2.onnx)
   - Downstream:    MQTT topic buoy/ota/update (QoS 1)
-  - Storage / IPC: Local file read.
+  - Storage / IPC: Local file read; MQTT broker connection.
 
 References:        Test-Before-Swap OTA fail-safe architecture.
 ===============================================================================
