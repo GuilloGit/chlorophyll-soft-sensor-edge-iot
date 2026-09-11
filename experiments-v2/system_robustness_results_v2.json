@@ -4,7 +4,7 @@
         "total_tests": 5,
         "passed_tests": 5,
         "failed_tests": 0,
-        "timestamp": "2026-09-06T17:06:17"
+        "timestamp": "2026-09-10T19:35:48"
     },
     "test_cases": [
         {
@@ -13,7 +13,7 @@
             "category": "Over-The-Air Update Fail-Safe",
             "expected_result": "Status 'failed' (Hash mismatch), temporary file removed, active ONNX model unchanged",
             "actual_result": "Hash verification check rejected corrupted SHA-256 digest before load",
-            "execution_time_ms": 6017.1,
+            "execution_time_ms": 6013.4,
             "status": "PASSED"
         },
         {
@@ -22,7 +22,7 @@
             "category": "Over-The-Air Update Fail-Safe",
             "expected_result": "Trial-load throws exception, status 'failed' (Load error), memory untouched",
             "actual_result": "Trial-load onnxruntime.InferenceSession() threw exception; .tmp discarded and active model preserved",
-            "execution_time_ms": 6003.0,
+            "execution_time_ms": 6009.3,
             "status": "PASSED"
         },
         {
@@ -49,7 +49,7 @@
             "category": "Hardware & Storage Resilience",
             "expected_result": "PRAGMA journal_mode=WAL ensures zero DB corruption; checkpoint.json resumes row index",
             "actual_result": "SQLite integrity check: 'ok', Journal mode: 'WAL'; atomic checkpointing intact",
-            "execution_time_ms": 77.8,
+            "execution_time_ms": 14.0,
             "status": "PASSED"
         }
     ]

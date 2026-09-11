@@ -1,9 +1,9 @@
 Metric,Count,Description
-True Negatives (TN),20799.0,Correctly classified normal water
-False Positives (FP),0.0,False alarm triggered
-False Negatives (FN),914.0,Missed bloom event
-True Positives (TP),0.0,Correctly detected bloom alarm
-Precision,0.0,Positive Predictive Value
-Recall,0.0,Sensitivity / Hit Rate
-F1-Score,0.0,Harmonic Mean of Precision & Recall
-Specificity,1.0,True Negative Rate
+True Negatives (TN),14807.0,Correctly classified normal water
+False Positives (FP),5992.0,False alarm triggered
+False Negatives (FN),846.0,Missed bloom event
+True Positives (TP),68.0,Correctly detected bloom alarm
+Precision,0.0112,Positive Predictive Value
+Recall,0.0744,Sensitivity / Hit Rate
+F1-Score,0.0195,Harmonic Mean of Precision & Recall
+Specificity,0.7119,True Negative Rate

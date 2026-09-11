@@ -50,6 +50,17 @@ TOPIC_OTA_COMMAND = "buoy/ota/update"
 TOPIC_OTA_STATUS = "buoy/ota/status"
 
 
+class OTAHttpHandler(http.server.SimpleHTTPRequestHandler):
+    """Custom HTTP handler that dynamically maps model requests to real assets without disk duplication."""
+    def translate_path(self, path):
+        clean_path = path.split("?")[0].split("#")[0]
+        if clean_path in ["/test_valid_model.joblib"]:
+            target = os.path.join(PROJECT_ROOT, "edge-system/app/model.joblib")
+            if os.path.exists(target):
+                return target
+        return super().translate_path(path)
+
+
 class MockModelServer:
     """Lightweight HTTP server to serve test model payloads for OTA testing."""
     def __init__(self, port=HTTP_PORT):
@@ -58,10 +69,8 @@ class MockModelServer:
         self.thread = None
 
     def start(self):
-        handler = http.server.SimpleHTTPRequestHandler
-        # Serve files from experiments directory
         os.chdir(SCRIPT_DIR)
-        self.server = socketserver.TCPServer(("", self.port), handler)
+        self.server = socketserver.TCPServer(("", self.port), OTAHttpHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         print(f"[INFO] [MockServer] Serving test models on HTTP port {self.port}")
@@ -92,13 +101,13 @@ def run_robustness_suite():
     dummy_model_file = os.path.join(SCRIPT_DIR, "test_valid_model.joblib")
     corrupted_model_file = os.path.join(SCRIPT_DIR, "test_corrupt_model.joblib")
 
-    # Create test assets
+    # Compute valid model SHA-256 in 64 KB streaming blocks (zero RAM spike, zero disk duplication)
     if os.path.exists(valid_model_src):
+        h = hashlib.sha256()
         with open(valid_model_src, "rb") as f:
-            valid_bytes = f.read()
-        with open(dummy_model_file, "wb") as f:
-            f.write(valid_bytes)
-        valid_sha = hashlib.sha256(valid_bytes).hexdigest()
+            while chunk := f.read(65536):
+                h.update(chunk)
+        valid_sha = h.hexdigest()
     else:
         valid_bytes = b"mock-scikit-learn-pipeline-data"
         with open(dummy_model_file, "wb") as f:

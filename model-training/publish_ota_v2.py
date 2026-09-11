@@ -55,10 +55,13 @@ def main():
     )
     args = parser.parse_args()
 
-    # Compute SHA-256 of the local model file
+    # Compute SHA-256 of the local model file in streaming 64 KB chunks
     print(f"[INFO] [OTAPublisher] Computing SHA-256 of {args.model}...")
+    h = hashlib.sha256()
     with open(args.model, "rb") as f:
-        sha = hashlib.sha256(f.read()).hexdigest()
+        while chunk := f.read(65536):
+            h.update(chunk)
+    sha = h.hexdigest()
 
     # Build the OTA command payload
     payload = json.dumps({

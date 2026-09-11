@@ -60,14 +60,22 @@ def export_chunked_onnx(model_in: str = MODEL_IN_PATH,
 
     edge_pipeline = joblib.load(model_in)
 
-    # 1. Extract and serialize target power transformation parameter (lambda)
+    # 1. Extract and serialize target power transformation parameters (lambda, mean, scale)
     y_transformer = edge_pipeline.named_steps['rf_model_with_y_scaler'].transformer_
     y_lambda = float(y_transformer.lambdas_[0])
+    y_mean = float(y_transformer._scaler.mean_[0] if hasattr(y_transformer, '_scaler') and y_transformer._scaler is not None else 0.0)
+    y_scale = float(y_transformer._scaler.scale_[0] if hasattr(y_transformer, '_scaler') and y_transformer._scaler is not None else 1.0)
+
+    transform_params = {
+        "y_lambda": y_lambda,
+        "y_mean": y_mean,
+        "y_scale": y_scale
+    }
 
     os.makedirs(os.path.dirname(lambda_out), exist_ok=True)
     with open(lambda_out, "w") as f:
-        json.dump({"y_lambda": y_lambda}, f)
-    print(f"[INFO] [ONNXExport] Saved power transform parameter (lambda={y_lambda:.5f}) to: {lambda_out}")
+        json.dump(transform_params, f, indent=4)
+    print(f"[INFO] [ONNXExport] Saved power transform parameters (lambda={y_lambda:.5f}, mean={y_mean:.5f}, scale={y_scale:.5f}) to: {lambda_out}")
 
     # 2. Extract feature scaler and underlying random forest regressor
     x_scaler = edge_pipeline.named_steps['x_scaler']

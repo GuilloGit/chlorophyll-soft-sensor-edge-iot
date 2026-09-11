@@ -12,14 +12,16 @@
         "alarm_threshold_ug_L": 10.0,
         "model_format": "ONNX Runtime (V2)",
         "y_lambda": 0.02829662709583453,
+        "y_mean": 2.1953387515664176,
+        "y_scale": 0.7377154823101166,
         "literature_reference": "Mozo et al. (2022) Scientific Reports"
     },
     "regression_holdout": {
         "random_forest": {
-            "mae_ug_L": 2.902,
-            "mse": 16.691,
-            "rmse_ug_L": 4.086,
-            "r2": -1.142
+            "mae_ug_L": 6.232,
+            "mse": 84.91,
+            "rmse_ug_L": 9.215,
+            "r2": -9.896
         },
         "naive_mean_baseline": {
             "mae_ug_L": 6.119,
@@ -31,17 +33,17 @@
     },
     "who_alarm_classification": {
         "random_forest": {
-            "TP": 0,
-            "FP": 0,
-            "TN": 20799,
-            "FN": 914,
-            "precision": 0.0,
-            "recall": 0.0,
-            "f1_score": 0.0,
-            "specificity": 1.0,
-            "accuracy": 0.9579,
+            "TP": 68,
+            "FP": 5992,
+            "TN": 14807,
+            "FN": 846,
+            "precision": 0.0112,
+            "recall": 0.0744,
+            "f1_score": 0.0195,
+            "specificity": 0.7119,
+            "accuracy": 0.6851,
             "total_alarm_events_true": 914,
-            "total_alarm_events_pred": 0
+            "total_alarm_events_pred": 6060
         },
         "naive_mean_baseline": {
             "TP": 0,

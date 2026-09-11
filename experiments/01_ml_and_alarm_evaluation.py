@@ -79,8 +79,8 @@ def run_evaluation():
 
     # 3. Compute Naive Mean Predictor Baseline (from Training Data)
     print("\n3. Computing Naive Mean Baseline...")
-    # Load training dataset to obtain the exact historical training mean
-    df_train_raw = pd.read_csv(TRAIN_DATA_PATH).dropna()
+    # Load training dataset to obtain the exact historical training mean (target column only)
+    df_train_raw = pd.read_csv(TRAIN_DATA_PATH, usecols=[TARGET]).dropna()
     train_mean = float(df_train_raw[TARGET].mean())
     y_pred_mean = np.full_like(y_true, fill_value=train_mean)
     print(f"  -> Historical Training Mean: {train_mean:.3f} µg/L")
@@ -184,7 +184,7 @@ def run_evaluation():
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5), dpi=300)
 
     # Subplot 1: Parity
-    ax1.scatter(y_true, y_pred_rf, alpha=0.25, color="#1f77b4", edgecolors="none", s=18, label="RF Predictions")
+    ax1.scatter(y_true, y_pred_rf, alpha=0.25, color="#1f77b4", edgecolors="none", s=18, label="RF Predictions", rasterized=True)
     max_val = max(np.max(y_true), np.max(y_pred_rf)) * 1.05
     ax1.plot([0, max_val], [0, max_val], "r--", linewidth=1.5, label="Perfect Agreement (1:1)")
     ax1.axhline(y=ALARM_THRESHOLD, color="#e94560", linestyle=":", label=f"WHO Alert Level 1 ({ALARM_THRESHOLD} µg/L)")

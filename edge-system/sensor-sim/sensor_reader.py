@@ -204,8 +204,9 @@ def main():
                   f"Temp={payload_dict['features']['EXO3(Temp_C)']:.1f}  "
                   f"Chl_actual={payload_dict['ground_truth']:.2f}")
 
-            # Save checkpoint after successful publish
-            save_checkpoint(iloc_idx)
+            # Save checkpoint periodically (every 50 rows) or on final sample to protect SSD from fsync thrashing
+            if iloc_idx % 50 == 0 or iloc_idx == len(df) - 1:
+                save_checkpoint(iloc_idx)
 
             # Sleep for the scaled interval
             time.sleep(EFFECTIVE_INTERVAL)

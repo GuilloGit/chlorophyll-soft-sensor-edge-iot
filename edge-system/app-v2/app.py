@@ -59,6 +59,8 @@ TEMP_MODEL_PATH = MODEL_PATH + ".tmp"
 BAKED_MODEL_PATH = os.getenv("BAKED_MODEL_PATH", "model_v2.onnx")
 LAMBDA_PATH = os.getenv("LAMBDA_PATH", "y_lambda.json")
 Y_LAMBDA = 0.0
+Y_MEAN = 0.0
+Y_SCALE = 1.0
 DB_PATH = os.getenv("DB_PATH", "/data/sensor_data.db")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", 96))  # 96 readings = 24 hours at 15min intervals
 
@@ -74,33 +76,35 @@ model_lock = threading.Lock()
 current_model = None  # Loaded during startup below
 
 
-def _inverse_power_transform(y_transformed: float, lmbda: float) -> float:
+def _inverse_power_transform(y_transformed: float, lmbda: float, mean: float = 0.0, scale: float = 1.0) -> float:
     """Computes the Inverse Power Transform (Target Unscaling) using pure NumPy.
     
-    Inverts the Yeo-Johnson non-linear power transform applied during training
-    to project normalized model predictions back into physical Chlorophyll-a
-    concentration units (µg/L):
-    
-        y = ((y_trans * lambda + 1)^(1 / lambda) - 1)   if y_trans >= 0, lambda != 0
-        y = exp(y_trans) - 1                            if y_trans >= 0, lambda == 0
-        y = 1 - (1 - (2 - lambda) * y_trans)^(1 / (2 - lambda)) if y_trans < 0, lambda != 2
-        y = 1 - exp(-y_trans)                           if y_trans < 0, lambda == 2
+    First reverses the affine standardization:
+        u = y_transformed * scale + mean
+    Then inverts the Yeo-Johnson non-linear power transform:
+        y = ((u * lambda + 1)^(1 / lambda) - 1)                 if u >= 0, lambda != 0
+        y = exp(u) - 1                                          if u >= 0, lambda == 0
+        y = 1 - (1 - (2 - lambda) * u)^(1 / (2 - lambda))       if u < 0, lambda != 2
+        y = 1 - exp(-u)                                         if u < 0, lambda == 2
         
     Args:
         y_transformed: Transformed scalar prediction from the ONNX graph.
         lmbda: Learned power transformation parameter (lambda) from y_lambda.json.
+        mean: Training target mean from y_lambda.json.
+        scale: Training target standard deviation from y_lambda.json.
         
     Returns:
         Unscaled physical Chlorophyll-a concentration in µg/L.
     """
-    if y_transformed >= 0:
+    u = float(y_transformed * scale + mean)
+    if u >= 0:
         if lmbda == 0.0:
-            return float(np.exp(y_transformed) - 1.0)
-        return float(np.power(y_transformed * lmbda + 1.0, 1.0 / lmbda) - 1.0)
+            return float(np.exp(u) - 1.0)
+        return float(np.power(u * lmbda + 1.0, 1.0 / lmbda) - 1.0)
     else:
         if lmbda == 2.0:
-            return float(1.0 - np.exp(-y_transformed))
-        return float(1.0 - np.power(1.0 - (2.0 - lmbda) * y_transformed, 1.0 / (2.0 - lmbda)))
+            return float(1.0 - np.exp(-u))
+        return float(1.0 - np.power(1.0 - (2.0 - lmbda) * u, 1.0 / (2.0 - lmbda)))
 
 
 # Backward compatibility alias
@@ -212,13 +216,16 @@ def load_initial_model() -> rt.InferenceSession:
             print(f"[ERROR] [InferenceEngineV2] Critical: No model found at {MODEL_PATH} or {BAKED_MODEL_PATH}")
             exit(1)
 
-    global Y_LAMBDA
+    global Y_LAMBDA, Y_MEAN, Y_SCALE
     try:
         with open(LAMBDA_PATH, "r") as f:
-            Y_LAMBDA = float(json.load(f).get("y_lambda", 0.0))
-        print(f"[INFO] [InferenceEngineV2] Power transform lambda loaded: {Y_LAMBDA}")
+            params = json.load(f)
+            Y_LAMBDA = float(params.get("y_lambda", 0.0))
+            Y_MEAN = float(params.get("y_mean", 0.0))
+            Y_SCALE = float(params.get("y_scale", 1.0))
+        print(f"[INFO] [InferenceEngineV2] Power transform parameters loaded: lambda={Y_LAMBDA:.5f}, mean={Y_MEAN:.5f}, scale={Y_SCALE:.5f}")
     except Exception as e:
-        print(f"[WARN] [InferenceEngineV2] Failed to load Y_LAMBDA from {LAMBDA_PATH}: {e}")
+        print(f"[WARN] [InferenceEngineV2] Failed to load transform parameters from {LAMBDA_PATH}: {e}")
 
     sess_options = rt.SessionOptions()
     sess_options.intra_op_num_threads = 1
@@ -374,7 +381,7 @@ def _handle_sensor_reading(client, msg):
             pred_transformed = float(current_model.run([label_name], {input_name: input_data})[0][0])
             
         # Target unscaling via inverse power transform (enforcing non-negative concentration)
-        raw_prediction = _inverse_power_transform(pred_transformed, Y_LAMBDA)
+        raw_prediction = _inverse_power_transform(pred_transformed, Y_LAMBDA, Y_MEAN, Y_SCALE)
         prediction = max(0.0, raw_prediction)
             
         inference_ms = float((time.perf_counter() - t0) * 1000)
