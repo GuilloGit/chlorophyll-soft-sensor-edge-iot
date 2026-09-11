@@ -58,6 +58,10 @@ class OTAHttpHandler(http.server.SimpleHTTPRequestHandler):
             target = os.path.join(PROJECT_ROOT, "edge-system/app-v2/model_v2.onnx")
             if os.path.exists(target):
                 return target
+        if clean_path in ["/test_valid_model.onnx.xz"]:
+            target = os.path.join(PROJECT_ROOT, "edge-system/app-v2/model_v2.onnx.xz")
+            if os.path.exists(target):
+                return target
         return super().translate_path(path)
 
 

@@ -20,6 +20,7 @@ References:        Test-Before-Swap OTA fail-safe architecture.
 ===============================================================================
 """
 
+import os
 import json
 import hashlib
 import argparse
@@ -34,8 +35,8 @@ def main():
         description="Publish a remote OTA update command to the edge buoy (V2 ONNX)."
     )
     parser.add_argument(
-        "--model", default="../edge-system/app-v2/model_v2.onnx",
-        help="Path to the local model file (used for SHA-256 computation)"
+        "--model", default=None,
+        help="Path to the local model or archive file (defaults to model_v2.onnx.xz if present, else model_v2.onnx)"
     )
     parser.add_argument(
         "--url", required=True,
@@ -55,10 +56,16 @@ def main():
     )
     args = parser.parse_args()
 
-    # Compute SHA-256 of the local model file in streaming 64 KB chunks
-    print(f"[INFO] [OTAPublisher] Computing SHA-256 of {args.model}...")
+    model_target = args.model
+    if not model_target:
+        xz_candidate = "../edge-system/app-v2/model_v2.onnx.xz"
+        onnx_candidate = "../edge-system/app-v2/model_v2.onnx"
+        model_target = xz_candidate if os.path.exists(xz_candidate) else onnx_candidate
+
+    # Compute SHA-256 of the local target file in streaming 64 KB chunks
+    print(f"[INFO] [OTAPublisher] Computing SHA-256 of target artifact: {model_target}...")
     h = hashlib.sha256()
-    with open(args.model, "rb") as f:
+    with open(model_target, "rb") as f:
         while chunk := f.read(65536):
             h.update(chunk)
     sha = h.hexdigest()

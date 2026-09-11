@@ -26,6 +26,8 @@ References:        Mozo et al. (2022); ONNX Opset 15 Specification.
 
 import os
 import json
+import lzma
+import hashlib
 import joblib
 import numpy as np
 import onnx
@@ -171,8 +173,33 @@ def export_chunked_onnx(model_in: str = MODEL_IN_PATH,
     with open(model_out, "wb") as f:
         f.write(final_model.SerializeToString())
 
-    size_mb = os.path.getsize(model_out) / (1024 * 1024)
-    print(f"[INFO] [ONNXExport] Export completed: {model_out} ({size_mb:.2f} MB)")
+    raw_size_mb = os.path.getsize(model_out) / (1024 * 1024)
+    raw_sha = hashlib.sha256()
+    with open(model_out, "rb") as f:
+        while chunk := f.read(65536):
+            raw_sha.update(chunk)
+    raw_hash = raw_sha.hexdigest()
+    print(f"[INFO] [ONNXExport] Raw ONNX export completed: {model_out} ({raw_size_mb:.2f} MB, SHA-256: {raw_hash})")
+
+    # 7. Compress artifact using LZMA (.xz) for Over-The-Air (OTA) transport
+    xz_out = model_out + ".xz"
+    print(f"[INFO] [ONNXExport] Generating LZMA compressed OTA archive: {xz_out}...")
+    xz_sha = hashlib.sha256()
+    with open(model_out, "rb") as f_in, lzma.open(xz_out, "wb", preset=6) as f_out:
+        while chunk := f_in.read(1024 * 1024):
+            f_out.write(chunk)
+            xz_sha.update(chunk)
+    
+    # Calculate hash of the compressed .xz file itself for OTA download verification
+    archive_sha = hashlib.sha256()
+    with open(xz_out, "rb") as f:
+        while chunk := f.read(65536):
+            archive_sha.update(chunk)
+    archive_hash = archive_sha.hexdigest()
+
+    xz_size_mb = os.path.getsize(xz_out) / (1024 * 1024)
+    reduction_pct = (1.0 - (xz_size_mb / raw_size_mb)) * 100.0
+    print(f"[INFO] [ONNXExport] LZMA OTA archive completed: {xz_out} ({xz_size_mb:.2f} MB, -{reduction_pct:.2f}%, SHA-256: {archive_hash})")
 
 
 if __name__ == "__main__":

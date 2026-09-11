@@ -33,6 +33,7 @@ References:        Mozo et al. (2022); Yeo & Johnson (2000); WHO Guidelines for
 import os
 import json
 import time
+import lzma
 import shutil
 import sqlite3
 import hashlib
@@ -261,8 +262,9 @@ print_db_stats(db_conn)
 def _handle_ota_update(client: mqtt.Client, payload: dict) -> None:
     """Executes the Test-Before-Swap fail-safe OTA update protocol for ONNX models.
     
-    1. Downloads candidate ONNX model artifact to a temporary staging file.
+    1. Downloads candidate model artifact/archive to a temporary staging file via streaming I/O.
     2. Verifies cryptographic SHA-256 hash against payload expectation.
+    2.5. If the artifact is an LZMA (.xz) compressed archive, decompresses it to TEMP_MODEL_PATH.
     3. Trial-loads candidate model into an isolated InferenceSession to catch corrupt binaries.
     4. Acquires model_lock and hot-swaps in-memory model reference without restarting container.
     5. Atomically replaces persistent disk file via os.replace.
@@ -281,29 +283,66 @@ def _handle_ota_update(client: mqtt.Client, payload: dict) -> None:
     print(f"[INFO] [OTAManager] Remote update command received (target version: {version})")
     print(f"[INFO] [OTAManager] Downloading artifact from: {url}")
 
-    # 1. Download to temporary staging file
+    temp_staging_path = TEMP_MODEL_PATH + ".download"
+
+    # 1. Download to temporary staging file using chunked streaming
     try:
-        response = requests.get(url, timeout=300)
+        response = requests.get(url, stream=True, timeout=300)
         response.raise_for_status()
+        downloaded_bytes = 0
+        sha_calc = hashlib.sha256()
+        with open(temp_staging_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=65536):
+                if chunk:
+                    f.write(chunk)
+                    sha_calc.update(chunk)
+                    downloaded_bytes += len(chunk)
     except Exception as e:
         print(f"[ERROR] [OTAManager] Download failed: {e}. Aborting update.")
+        if os.path.exists(temp_staging_path):
+            os.remove(temp_staging_path)
         _publish_ota_status(client, version, "failed", f"Download error: {e}")
         return
 
-    with open(TEMP_MODEL_PATH, "wb") as f:
-        f.write(response.content)
+    print(f"[INFO] [OTAManager] Downloaded {downloaded_bytes:,} bytes to staging buffer.")
 
-    print(f"[INFO] [OTAManager] Downloaded {len(response.content):,} bytes to staging buffer.")
-
-    # 2. Verify SHA-256 Checksum
-    actual_hash = hashlib.sha256(response.content).hexdigest()
+    # 2. Verify SHA-256 Checksum of downloaded artifact
+    actual_hash = sha_calc.hexdigest()
     if actual_hash != expected_hash:
         print(f"[ERROR] [OTAManager] SHA-256 mismatch! Expected {expected_hash[:16]}..., got {actual_hash[:16]}... Aborting.")
-        os.remove(TEMP_MODEL_PATH)
+        if os.path.exists(temp_staging_path):
+            os.remove(temp_staging_path)
         _publish_ota_status(client, version, "failed", "Hash mismatch")
         return
 
     print("[INFO] [OTAManager] SHA-256 checksum verified successfully.")
+
+    # 2.5 Decompress if LZMA (.xz) transport archive
+    try:
+        with open(temp_staging_path, "rb") as f_check:
+            header = f_check.read(6)
+        
+        # Check XZ magic header: \xfd7zXZ\x00
+        if header.startswith(b"\xfd7zXZ\x00"):
+            print("[INFO] [OTAManager] Detected LZMA (.xz) transport archive. Decompressing...")
+            t_decomp_start = time.perf_counter()
+            with lzma.open(temp_staging_path, "rb") as f_in, open(TEMP_MODEL_PATH, "wb") as f_out:
+                while chunk := f_in.read(1024 * 1024):
+                    f_out.write(chunk)
+            t_decomp = time.perf_counter() - t_decomp_start
+            decomp_size = os.path.getsize(TEMP_MODEL_PATH) / (1024 * 1024)
+            print(f"[INFO] [OTAManager] LZMA decompression completed in {t_decomp:.2f}s ({decomp_size:.2f} MB extracted).")
+            os.remove(temp_staging_path)
+        else:
+            os.replace(temp_staging_path, TEMP_MODEL_PATH)
+    except Exception as e:
+        print(f"[ERROR] [OTAManager] Decompression failed: {e}. Aborting update.")
+        if os.path.exists(temp_staging_path):
+            os.remove(temp_staging_path)
+        if os.path.exists(TEMP_MODEL_PATH):
+            os.remove(TEMP_MODEL_PATH)
+        _publish_ota_status(client, version, "failed", f"Load error: Decompression failed ({e})")
+        return
 
     # 3. Trial-load candidate model in isolated session
     try:
@@ -313,7 +352,8 @@ def _handle_ota_update(client: mqtt.Client, payload: dict) -> None:
         new_model = rt.InferenceSession(TEMP_MODEL_PATH, sess_options=sess_options, providers=['CPUExecutionProvider'])
     except Exception as e:
         print(f"[ERROR] [OTAManager] Model deserialization error: {e}. Aborting hot-swap.")
-        os.remove(TEMP_MODEL_PATH)
+        if os.path.exists(TEMP_MODEL_PATH):
+            os.remove(TEMP_MODEL_PATH)
         _publish_ota_status(client, version, "failed", f"Load error: {e}")
         return
 
