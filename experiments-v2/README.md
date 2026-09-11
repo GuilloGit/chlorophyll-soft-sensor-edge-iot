@@ -75,7 +75,7 @@ python run_clean_benchmark_v2.py
 ### 2. ML Soft-Sensor & WHO Alarm Evaluation (`01_ml_and_alarm_evaluation_v2.py`)
 Evaluates predictive fidelity and regulatory hazard detection:
 * **Continuous Regression**: Computes Mean Absolute Error (MAE), Mean Squared Error (MSE), Root Mean Squared Error (RMSE), and Coefficient of Determination ($R^2$) against the historical Naive Mean baseline.
-* **Target Unscaling**: Utilizes `_inverse_power_transform` with the fitted Yeo-Johnson parameter $\lambda$ from `edge-system/app-v2/y_lambda.json`.
+* **Target Unscaling**: Utilizes `_inverse_power_transform` with the fitted Yeo-Johnson unscaling parameters from `edge-system/app-v2/target_transform.json`.
 * **WHO Alert Level 1 Classification**: Evaluates binary alarm performance ($\ge 10.0\,\mu\text{g/L}$): True Positives, False Positives, False Negatives, True Negatives, Precision, Recall (Sensitivity), Specificity, and F1-Score.
 * **Visualizations**: Generates regression parity plots, confusion matrices, and continuous time-series tracking charts.
 

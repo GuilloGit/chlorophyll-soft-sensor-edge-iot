@@ -22,7 +22,7 @@ Data Interfaces:
                      - edge-system/app/model_metrics.json (validation metrics)
                      - edge-system/sensor-sim/data/simulation_test_data.csv (holdout)
                      - edge-system/app-v2/model_v2.onnx (chunked ONNX ensemble)
-                     - edge-system/app-v2/y_lambda.json (target power transform parameter)
+                     - edge-system/app-v2/target_transform.json (target transform parameter specification)
   - Storage / IPC: Local filesystem I/O.
 
 References:        Mozo et al. (2022); Martín-Suazo et al. (2024).
@@ -198,7 +198,7 @@ try:
     from export_onnx import export_chunked_onnx
     export_chunked_onnx(
         model_in=edge_model_path,
-        lambda_out=os.path.join(BASE_DIR, "../edge-system/app-v2/y_lambda.json"),
+        transform_out=os.path.join(BASE_DIR, "../edge-system/app-v2/target_transform.json"),
         model_out=os.path.join(BASE_DIR, "../edge-system/app-v2/model_v2.onnx")
     )
 except Exception as e:

@@ -112,7 +112,7 @@ A superficial reading of the pre-fix benchmark reported that V2 "improved" MAE f
 
 ## 5. Deployment Sign-Off Checklist
 
-- [x] Target serialization format updated: `edge-system/app-v2/y_lambda.json` contains `y_lambda`, `y_mean`, and `y_scale`.
+- [x] Target serialization format updated: `edge-system/app-v2/target_transform.json` contains `y_lambda`, `y_mean`, and `y_scale`.
 - [x] Exporter verified: `model-training/export_onnx.py` automatically extracts transformer moments from Scikit-Learn pipeline.
 - [x] Edge runtime verified: `edge-system/app-v2/app.py` implements `_inverse_power_transform` with full affine unscaling and non-negative clamping.
 - [x] Holdout benchmark script verified: `experiments-v2/01_ml_and_alarm_evaluation_v2.py` updated to use full unscaling.

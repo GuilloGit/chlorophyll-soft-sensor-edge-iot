@@ -69,7 +69,7 @@ chlorophyll-soft-sensor-edge-iot/
 │   ├── app-v2/                     # V2 Inference Engine (Decoupled ONNX runtime)
 │   │   ├── app.py                  # Lightweight ONNX inference, SQLite WAL, batching & OTA
 │   │   ├── model_v2.onnx           # Exported chunked ONNX model artifact (10x10 trees)
-│   │   ├── y_lambda.json           # Target power transform lambda parameter
+│   │   ├── target_transform.json   # Target transform parameter specification (lambda, mean, scale)
 │   │   └── Dockerfile              # Slim ONNX Runtime edge container (~150 MB image)
 │   ├── sensor-sim/                 # Software-in-the-Loop (SIL) telemetry simulator
 │   │   ├── sensor_reader.py        # Stream driver with atomic checkpoint state machine
@@ -188,7 +188,7 @@ python analytics_subscriber.py
 The cloud monitor continuously generates updated fidelity and performance summaries in `cloud-system/edge_performance_report.json`.
 
 ### 4. Train or Retrain the Model
-To re-run the 10-fold sequential cross-validation pipeline and export both V1 (`model.joblib`) and V2 (`model_v2.onnx`, `y_lambda.json`) edge assets:
+To re-run the 10-fold sequential cross-validation pipeline and export both V1 (`model.joblib`) and V2 (`model_v2.onnx`, `target_transform.json`) edge assets:
 
 ```bash
 cd model-training

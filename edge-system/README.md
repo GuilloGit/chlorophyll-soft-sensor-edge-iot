@@ -48,7 +48,7 @@ graph TD
 | `mosquitto_edge` | `eclipse-mosquitto:2` | Local MQTT message broker facilitating inter-process communication (IPC) between containers and WAN telemetry uplinks. | `mosquitto_data:/mosquitto/data`<br/>`mosquitto_logs:/mosquitto/log` | Shared (V1 & V2) |
 | `edge_sensor_sim` | `python:3.11-slim` | Software-in-the-Loop (SIL) telemetry simulator feeding chronological historical observations into the broker at a configurable time-scaled interval. | `sensor_data:/data` | Shared (V1 & V2) |
 | `edge_inference_app` | `python:3.11-slim` | **V1 Baseline Engine**: Scikit-Learn Random Forest pipeline (`model.joblib`), SQLite WAL persistence, 24h batching, and Joblib OTA updates. | `sensor_data:/data` | V1 Baseline |
-| `edge_inference_app_v2` | `python:3.11-slim` | **V2 Optimized Engine**: C++ ONNX Runtime engine (`model_v2.onnx`), pure NumPy inverse power transform (`y_lambda.json`), zero-spin single-threaded session options, and ONNX OTA updates. | `sensor_data:/data` | V2 Production |
+| `edge_inference_app_v2` | `python:3.11-slim` | **V2 Optimized Engine**: C++ ONNX Runtime engine (`model_v2.onnx`), pure NumPy inverse power transform (`target_transform.json`), zero-spin single-threaded session options, and ONNX OTA updates. | `sensor_data:/data` | V2 Production |
 
 ---
 
@@ -283,7 +283,7 @@ PRAGMA synchronous = NORMAL;
 | `MQTT_PORT` | `1883` | V1 & V2 | MQTT broker port |
 | `MODEL_PATH` | `model.joblib` / `model_v2.onnx` | V1 / V2 | Active runtime model path on persistent volume |
 | `BAKED_MODEL_PATH` | `model.joblib` / `model_v2.onnx` | V1 / V2 | Dockerfile-baked fallback model inside image |
-| `LAMBDA_PATH` | `y_lambda.json` | V2 | JSON file containing learned power transform parameter $\lambda$ |
+| `TRANSFORM_PATH` | `target_transform.json` | V2 | JSON file containing learned target transform parameters ($\lambda, \mu, \sigma$; supports `UNSCALER_PATH` / `LAMBDA_PATH` alias) |
 | `DB_PATH` | `/data/sensor_data.db` | V1 & V2 | Path to persistent SQLite database |
 | `BATCH_SIZE` | `96` | V1 & V2 | Consolidated daily batch size ($96 \times 15\,\text{min} = 24\,\text{h}$) |
 

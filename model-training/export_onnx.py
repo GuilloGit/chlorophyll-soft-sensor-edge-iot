@@ -17,7 +17,7 @@ Description:       Decomposes the fitted Scikit-Learn production pipeline
 Data Interfaces:
   - Upstream:      edge-system/app/model.joblib (fitted Scikit-Learn pipeline)
   - Downstream:    edge-system/app-v2/model_v2.onnx (chunked ONNX ensemble)
-                   edge-system/app-v2/y_lambda.json (target power transform parameter)
+                   edge-system/app-v2/target_transform.json (target transform parameter specification)
   - Storage / IPC: Local filesystem read/write.
 
 References:        Mozo et al. (2022); ONNX Opset 15 Specification.
@@ -38,33 +38,34 @@ from sklearn.pipeline import Pipeline
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 MODEL_IN_PATH = os.path.join(PROJECT_ROOT, "edge-system", "app", "model.joblib")
-LAMBDA_OUT_PATH = os.path.join(PROJECT_ROOT, "edge-system", "app-v2", "y_lambda.json")
+TRANSFORM_OUT_PATH = os.path.join(PROJECT_ROOT, "edge-system", "app-v2", "target_transform.json")
+UNSCALER_OUT_PATH = TRANSFORM_OUT_PATH  # Backward compatibility alias
+LAMBDA_OUT_PATH = TRANSFORM_OUT_PATH    # Backward compatibility alias
 MODEL_OUT_PATH = os.path.join(PROJECT_ROOT, "edge-system", "app-v2", "model_v2.onnx")
 
 
 def export_chunked_onnx(model_in: str = MODEL_IN_PATH,
-                        lambda_out: str = LAMBDA_OUT_PATH,
+                        transform_out: str = None,
                         model_out: str = MODEL_OUT_PATH,
-                        chunk_size: int = 10) -> None:
+                        chunk_size: int = 10,
+                        **kwargs) -> None:
     """Decomposes a fitted Scikit-Learn pipeline and exports a chunked ONNX model.
 
     Args:
         model_in: Path to the input serialized joblib pipeline.
-        lambda_out: Target path for the extracted Yeo-Johnson lambda parameter.
+        transform_out: Target path for the extracted Yeo-Johnson target transform parameters.
         model_out: Target path for the output ONNX model binary.
         chunk_size: Number of trees per TreeEnsembleRegressor chunk node.
     """
+    target_transform_path = transform_out or kwargs.get("unscaler_out") or kwargs.get("lambda_out") or TRANSFORM_OUT_PATH
     print(f"[INFO] [ONNXExport] Loading trained pipeline from: {model_in}")
-    if not os.path.exists(model_in):
-        raise FileNotFoundError(f"Source model pipeline not found at {model_in}")
-
     edge_pipeline = joblib.load(model_in)
 
-    # 1. Extract and serialize target power transformation parameters (lambda, mean, scale)
+    # 1. Extract target unscaling parameters (lambda, mean, scale)
     y_transformer = edge_pipeline.named_steps['rf_model_with_y_scaler'].transformer_
     y_lambda = float(y_transformer.lambdas_[0])
-    y_mean = float(y_transformer._scaler.mean_[0] if hasattr(y_transformer, '_scaler') and y_transformer._scaler is not None else 0.0)
-    y_scale = float(y_transformer._scaler.scale_[0] if hasattr(y_transformer, '_scaler') and y_transformer._scaler is not None else 1.0)
+    y_mean = float(y_transformer._scaler.mean_[0])
+    y_scale = float(y_transformer._scaler.scale_[0])
 
     transform_params = {
         "y_lambda": y_lambda,
@@ -72,10 +73,10 @@ def export_chunked_onnx(model_in: str = MODEL_IN_PATH,
         "y_scale": y_scale
     }
 
-    os.makedirs(os.path.dirname(lambda_out), exist_ok=True)
-    with open(lambda_out, "w") as f:
+    os.makedirs(os.path.dirname(target_transform_path), exist_ok=True)
+    with open(target_transform_path, "w") as f:
         json.dump(transform_params, f, indent=4)
-    print(f"[INFO] [ONNXExport] Saved power transform parameters (lambda={y_lambda:.5f}, mean={y_mean:.5f}, scale={y_scale:.5f}) to: {lambda_out}")
+    print(f"[INFO] [ONNXExport] Saved target transform parameters (lambda={y_lambda:.5f}, mean={y_mean:.5f}, scale={y_scale:.5f}) to: {target_transform_path}")
 
     # 2. Extract feature scaler and underlying random forest regressor
     x_scaler = edge_pipeline.named_steps['x_scaler']

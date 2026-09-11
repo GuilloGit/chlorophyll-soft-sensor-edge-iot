@@ -23,7 +23,7 @@ Data Interfaces:
                      - buoy/ota/status (QoS 1, OTA deployment status notifications)
   - Storage / IPC: SQLite database with WAL journal mode (/data/sensor_data.db);
                    ONNX serialized model (/data/model_v2.onnx);
-                   Power transform parameter file (/app/y_lambda.json).
+                   Target transform parameter file (/app/target_transform.json).
 
 References:        Mozo et al. (2022); Yeo & Johnson (2000); WHO Guidelines for
                    Safe Recreational Water Environments (2003).
@@ -56,8 +56,9 @@ TOPIC_OTA_STATUS = "buoy/ota/status"
 
 MODEL_PATH = os.getenv("MODEL_PATH", "model_v2.onnx")
 TEMP_MODEL_PATH = MODEL_PATH + ".tmp"
-BAKED_MODEL_PATH = os.getenv("BAKED_MODEL_PATH", "model_v2.onnx")
-LAMBDA_PATH = os.getenv("LAMBDA_PATH", "y_lambda.json")
+TRANSFORM_PATH = os.getenv("TRANSFORM_PATH", os.getenv("UNSCALER_PATH", os.getenv("LAMBDA_PATH", "target_transform.json")))
+UNSCALER_PATH = TRANSFORM_PATH  # Backward compatibility alias
+LAMBDA_PATH = TRANSFORM_PATH    # Backward compatibility alias
 Y_LAMBDA = 0.0
 Y_MEAN = 0.0
 Y_SCALE = 1.0
@@ -89,9 +90,9 @@ def _inverse_power_transform(y_transformed: float, lmbda: float, mean: float = 0
         
     Args:
         y_transformed: Transformed scalar prediction from the ONNX graph.
-        lmbda: Learned power transformation parameter (lambda) from y_lambda.json.
-        mean: Training target mean from y_lambda.json.
-        scale: Training target standard deviation from y_lambda.json.
+        lmbda: Learned power transformation parameter (lambda) from target_transform.json.
+        mean: Training target mean from target_transform.json.
+        scale: Training target standard deviation from target_transform.json.
         
     Returns:
         Unscaled physical Chlorophyll-a concentration in µg/L.
@@ -217,15 +218,21 @@ def load_initial_model() -> rt.InferenceSession:
             exit(1)
 
     global Y_LAMBDA, Y_MEAN, Y_SCALE
+    resolved_path = TRANSFORM_PATH
+    if not os.path.exists(resolved_path):
+        for candidate in ["target_transform.json", "target_unscaler.json", "y_lambda.json"]:
+            if os.path.exists(candidate):
+                resolved_path = candidate
+                break
     try:
-        with open(LAMBDA_PATH, "r") as f:
+        with open(resolved_path, "r") as f:
             params = json.load(f)
             Y_LAMBDA = float(params.get("y_lambda", 0.0))
             Y_MEAN = float(params.get("y_mean", 0.0))
             Y_SCALE = float(params.get("y_scale", 1.0))
-        print(f"[INFO] [InferenceEngineV2] Power transform parameters loaded: lambda={Y_LAMBDA:.5f}, mean={Y_MEAN:.5f}, scale={Y_SCALE:.5f}")
+        print(f"[INFO] [InferenceEngineV2] Target transform parameters loaded: lambda={Y_LAMBDA:.5f}, mean={Y_MEAN:.5f}, scale={Y_SCALE:.5f} from {resolved_path}")
     except Exception as e:
-        print(f"[WARN] [InferenceEngineV2] Failed to load transform parameters from {LAMBDA_PATH}: {e}")
+        print(f"[WARN] [InferenceEngineV2] Failed to load transform parameters from {resolved_path}: {e}")
 
     sess_options = rt.SessionOptions()
     sess_options.intra_op_num_threads = 1

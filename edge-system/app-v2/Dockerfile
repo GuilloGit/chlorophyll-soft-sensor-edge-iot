@@ -15,6 +15,6 @@ COPY app.py .
 # 3. Copy the ML model LAST (changes on every OTA/retrain)
 # Balena's delta-updater will only transmit this layer's diff.
 COPY model_v2.onnx .
-COPY y_lambda.json .
+COPY target_transform.json .
 
 CMD ["python", "-u", "app.py"]

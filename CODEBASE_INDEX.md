@@ -78,7 +78,7 @@ The system comprises three physical and architectural tiers:
 * `export_onnx.py`:
   - Decomposes `model.joblib` into base scaler and 100-tree Random Forest.
   - Splits ensemble into 10 chunks of 10 trees, scales tree weights by $0.1$, and inserts an ONNX `Sum` node to satisfy ONNX Opset 15 and avoid 2GB serialization / protobuf limits.
-  - Extracts learned target power transform parameter $\lambda$ to `y_lambda.json`.
+  - Extracts learned target transform parameters ($\lambda, \mu, \sigma$) to `target_transform.json`.
 * `publish_ota.py` / `publish_ota_v2.py`:
   - CLI utilities computing `hashlib.sha256()` on the target model binary and publishing `{url, sha256, version}` to `buoy/ota/update` (QoS 1).
 
@@ -139,7 +139,7 @@ CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings (timestamp);
 | `CHECKPOINT_PATH` | `sensor-sim` | `/data/checkpoint.json` | Persistent volume path for crash-safe resume index |
 | `MODEL_PATH` | `app` / `app-v2` | `model.joblib` / `model_v2.onnx` | Active model path on persistent Docker volume (`/data`) |
 | `BAKED_MODEL_PATH` | `app` / `app-v2` | `model.joblib` / `model_v2.onnx` | Fallback model image path inside container image (`/app`) |
-| `LAMBDA_PATH` | `app-v2` | `y_lambda.json` | Learned power transform parameter path on persistent volume |
+| `TRANSFORM_PATH` | `app-v2` | `target_transform.json` | Learned target transform parameter path on persistent volume (supports `UNSCALER_PATH` / `LAMBDA_PATH` alias) |
 | `DB_PATH` | `app` / `app-v2` | `/data/sensor_data.db` | Persistent SQLite database file location |
 | `BATCH_SIZE` | `app` / `app-v2` | `96` | Aggregation window size ($96 \times 15\text{ min} = 24\text{ hours}$) |
 

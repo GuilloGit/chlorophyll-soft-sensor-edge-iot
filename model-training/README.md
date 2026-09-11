@@ -4,7 +4,7 @@ The **Machine Learning Workstation Tier** encompasses offline model training, hy
 
 The tier produces artifacts for both runtime architectures:
 * **V1 Scikit-Learn Baseline**: Exported as a serialized Joblib pipeline (`model.joblib`).
-* **V2 ONNX Production Engine**: Exported via 10x10 tree chunking to an optimized ONNX graph (`model_v2.onnx`) with decoupled target power unscaling parameters (`y_lambda.json`).
+* **V2 ONNX Production Engine**: Exported via 10x10 tree chunking to an optimized ONNX graph (`model_v2.onnx`) with decoupled target unscaling parameters (`target_transform.json`).
 
 ---
 
@@ -67,7 +67,7 @@ flowchart LR
 Deploying Scikit-Learn pipelines on resource-constrained edge single-board computers introduces significant overhead (~2.4 GB RAM, 1.2 GB container images). To enable lightweight C++ runtime deployment:
 
 1. **Decomposition**: `export_onnx.py` separates the input `PowerTransformer` from the inner `RandomForestRegressor`.
-2. **Target Unscaling Parameter Extraction**: The learned Yeo-Johnson $\lambda$ parameter ($\lambda \approx 0.0283$) is extracted to `edge-system/app-v2/y_lambda.json`, enabling pure NumPy inverse power transformation (target unscaling) on the edge without Scikit-Learn dependencies.
+2. **Target Transform Parameter Extraction**: The learned Yeo-Johnson transformation parameters ($\lambda \approx 0.0283, \mu, \sigma$) are extracted to `edge-system/app-v2/target_transform.json`, enabling pure NumPy inverse power transformation (target unscaling) on the edge without Scikit-Learn dependencies.
 3. **10x10 Tree Chunking with `Sum` Node**: Converting a 100-tree Random Forest directly into a single ONNX `TreeEnsembleRegressor` node frequently triggers serialization limits and produces unstable memory allocations on embedded runtimes. `export_onnx.py` splits the ensemble into 10 chunks of 10 trees each, scales target weights by $0.1$ ($1/10$), and aggregates the sub-outputs using an ONNX `Sum` node:
 
 ```mermaid
@@ -84,7 +84,7 @@ flowchart TD
     C9 --> SUM
 
     SUM --> Y_TRANS["Transformed Prediction (y_trans)"]
-    Y_TRANS --> NUMPY["Pure NumPy Target Unscaling (y_lambda.json)"]
+    Y_TRANS --> NUMPY["Pure NumPy Target Unscaling (target_transform.json)"]
     NUMPY --> Y_FINAL["Physical Chlorophyll-a (µg/L)"]
 ```
 
@@ -132,7 +132,7 @@ python ml_regression_KFold_model_export.py
 * `edge-system/app/model_metrics.json`: Cross-validation and holdout validation metrics.
 * `edge-system/sensor-sim/data/simulation_test_data.csv`: Unseen chronological test data.
 * `edge-system/app-v2/model_v2.onnx`: Chunked 10x10 ONNX ensemble (~535 KB).
-* `edge-system/app-v2/y_lambda.json`: Power transform parameter ($\lambda$).
+* `edge-system/app-v2/target_transform.json`: Target transform parameters ($\lambda, \mu, \sigma$).
 
 ### 3. Dedicated ONNX Conversion (Optional)
 To independently re-export the ONNX model from an existing `model.joblib`:

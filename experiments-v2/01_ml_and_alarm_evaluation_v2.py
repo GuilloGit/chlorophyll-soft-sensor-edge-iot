@@ -15,7 +15,7 @@ Description:       Evaluates the V2 ONNX Random Forest soft-sensor against the
 
 Data Interfaces:
   - Upstream:      edge-system/app-v2/model_v2.onnx
-                   edge-system/app-v2/y_lambda.json
+                   edge-system/app-v2/target_transform.json
                    edge-system/sensor-sim/data/simulation_test_data.csv
                    model-training/data/Playa_UPM_resampled_24H_1H.csv
   - Downstream:    experiments-v2/ml_alarm_results_v2.json
@@ -43,7 +43,9 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, c
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 MODEL_PATH = os.path.join(PROJECT_ROOT, "edge-system/app-v2/model_v2.onnx")
-LAMBDA_PATH = os.path.join(PROJECT_ROOT, "edge-system/app-v2/y_lambda.json")
+TRANSFORM_PATH = os.path.join(PROJECT_ROOT, "edge-system/app-v2/target_transform.json")
+UNSCALER_PATH = TRANSFORM_PATH  # Backward compatibility alias
+LAMBDA_PATH = TRANSFORM_PATH    # Backward compatibility alias
 TEST_DATA_PATH = os.path.join(PROJECT_ROOT, "edge-system/sensor-sim/data/simulation_test_data.csv")
 TRAIN_DATA_PATH = os.path.join(PROJECT_ROOT, "model-training/data/Playa_UPM_resampled_24H_1H.csv")
 CLEAN_DB_PATH = os.path.join(SCRIPT_DIR, "clean_run_data.db")
@@ -92,15 +94,25 @@ def run_evaluation():
     y_lambda = 0.0
     y_mean = 0.0
     y_scale = 1.0
-    if os.path.exists(LAMBDA_PATH):
-        with open(LAMBDA_PATH, "r") as f:
+    resolved_transform_path = TRANSFORM_PATH
+    if not os.path.exists(resolved_transform_path):
+        for candidate in [
+            os.path.join(PROJECT_ROOT, "edge-system/app-v2/target_unscaler.json"),
+            os.path.join(PROJECT_ROOT, "edge-system/app-v2/y_lambda.json")
+        ]:
+            if os.path.exists(candidate):
+                resolved_transform_path = candidate
+                break
+
+    if os.path.exists(resolved_transform_path):
+        with open(resolved_transform_path, "r") as f:
             params = json.load(f)
             y_lambda = float(params.get("y_lambda", 0.0))
             y_mean = float(params.get("y_mean", 0.0))
             y_scale = float(params.get("y_scale", 1.0))
-        print(f"  -> Power transform parameters loaded: lambda={y_lambda:.5f}, mean={y_mean:.5f}, scale={y_scale:.5f}")
+        print(f"  -> Target transform parameters loaded: lambda={y_lambda:.5f}, mean={y_mean:.5f}, scale={y_scale:.5f} from {os.path.basename(resolved_transform_path)}")
     else:
-        print(f"  -> WARNING: {LAMBDA_PATH} not found. Using default parameters.")
+        print(f"  -> WARNING: {TRANSFORM_PATH} not found. Using default parameters.")
 
     df_test = pd.read_csv(TEST_DATA_PATH).dropna()
     print(f"  -> Holdout samples:  {len(df_test):,}")
