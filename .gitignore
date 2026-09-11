@@ -48,10 +48,13 @@ edge-system/sensor-sim/data/
 edge-system/app-v2/model.joblib
 edge-system/app-v2/model.joblib.tmp
 edge-system/app-v2/model_v2.onnx
+edge-system/app-v2/model_v2.onnx.xz
 edge-system/app-v2/*.onnx
+edge-system/app-v2/*.xz
+
 *.onnx
 *.joblib
-
+*.xz
 
 # SQLite
 *.db
