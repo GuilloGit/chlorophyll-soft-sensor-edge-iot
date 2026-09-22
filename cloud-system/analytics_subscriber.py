@@ -24,18 +24,26 @@ References:        Mozo et al. (2022); WHO Guidelines for Safe Recreational
 """
 
 import os
+import sys
+import csv
 import json
 import time
 import numpy as np
 import paho.mqtt.client as mqtt
 from sklearn.metrics import mean_absolute_error, r2_score
 
+# Ensure immediate unbuffered output on Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")  # Assuming running on laptop pointing to local Docker port
 MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
 TOPIC_DAILY_BATCH = "sensor/water/daily_batch"
 TOPIC_ALARM = "sensor/water/alarm"
 
-REPORT_PATH = "edge_performance_report.json"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPORT_PATH = os.getenv("REPORT_PATH", os.path.join(SCRIPT_DIR, "edge_performance_report.json"))
+CSV_PATH = os.getenv("CSV_PATH", os.path.join(SCRIPT_DIR, "telemetry_measurements.csv"))
 
 # State
 all_actual = []
@@ -116,19 +124,65 @@ def on_message(client, userdata, msg):
             batch = json.loads(msg.payload.decode('utf-8'))
             print(f"\n[INFO] [CloudSubscriber] Received daily batch containing {len(batch)} readings.")
             
-            for reading in batch:
-                all_actual.append(reading["actual_chlorophyll"])
-                all_predicted.append(reading["predicted_chlorophyll"])
-                all_inference_ms.append(reading["inference_ms"])
-                all_cpu.append(reading["cpu_percent"])
-                all_ram.append(reading["ram_mb"])
+            # Persist raw measurements to CSV
+            file_exists = os.path.exists(CSV_PATH)
+            fieldnames = [
+                "timestamp", "temperature", "sp_cond", "ph", "battery",
+                "predicted_chlorophyll", "actual_chlorophyll", "alarm",
+                "inference_ms", "db_write_ms", "cpu_percent", "ram_mb"
+            ]
+            
+            with open(CSV_PATH, "a", newline="", encoding="utf-8") as csv_file:
+                writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+                if not file_exists:
+                    writer.writeheader()
                 
+                for reading in batch:
+                    all_actual.append(reading.get("actual_chlorophyll", 0.0))
+                    all_predicted.append(reading.get("predicted_chlorophyll", 0.0))
+                    all_inference_ms.append(reading.get("inference_ms", 0.0))
+                    all_cpu.append(reading.get("cpu_percent", 0.0))
+                    all_ram.append(reading.get("ram_mb", 0.0))
+                    
+                    feat = reading.get("features", {})
+                    row = {
+                        "timestamp": reading.get("timestamp", ""),
+                        "temperature": feat.get("temperature", reading.get("temp_c", "")),
+                        "sp_cond": feat.get("sp_cond", reading.get("spcond_us_cm", "")),
+                        "ph": feat.get("ph", reading.get("ph", "")),
+                        "battery": feat.get("battery", reading.get("battery", "")),
+                        "predicted_chlorophyll": reading.get("predicted_chlorophyll", ""),
+                        "actual_chlorophyll": reading.get("actual_chlorophyll", ""),
+                        "alarm": reading.get("alarm", False),
+                        "inference_ms": reading.get("inference_ms", ""),
+                        "db_write_ms": reading.get("db_write_ms", ""),
+                        "cpu_percent": reading.get("cpu_percent", ""),
+                        "ram_mb": reading.get("ram_mb", ""),
+                    }
+                    writer.writerow(row)
+            
+            print(f"[INFO] [CloudSubscriber] Appended {len(batch)} readings to {CSV_PATH}")
             generate_report()
+            if exit_on_batch:
+                print("\n[INFO] [CloudSubscriber] Daily batch processed. Exiting as requested by --exit-on-batch.")
+                client.disconnect()
         except Exception as e:
             print(f"[ERROR] [CloudSubscriber] Error processing batch: {e}")
 
 
+exit_on_batch = False
+
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Cloud Analytics Subscriber for Edge Buoy Telemetry")
+    parser.add_argument("--broker", type=str, default=os.getenv("MQTT_BROKER", "localhost"), help="MQTT broker address (default: localhost or MQTT_BROKER env)")
+    parser.add_argument("--port", type=int, default=int(os.getenv("MQTT_PORT", 1883)), help="MQTT broker port (default: 1883)")
+    parser.add_argument("--exit-on-batch", action="store_true", help="Exit automatically after processing the first daily batch")
+    args = parser.parse_args()
+    exit_on_batch = args.exit_on_batch
+    MQTT_BROKER = args.broker
+    MQTT_PORT = args.port
+
     print("========================================")
     print("  CLOUD ANALYTICS & PERFORMANCE MONITOR")
     print("========================================")
@@ -151,3 +205,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n[INFO] [CloudSubscriber] Shutting down Cloud Analytics...")
         generate_report()
+

@@ -31,6 +31,7 @@ References:        Mozo et al. (2022); Yeo & Johnson (2000); WHO Guidelines for
 """
 
 import os
+import gc
 import json
 import time
 import lzma
@@ -38,6 +39,7 @@ import shutil
 import sqlite3
 import hashlib
 import threading
+import ctypes
 import numpy as np
 import onnxruntime as rt
 import requests
@@ -55,6 +57,7 @@ TOPIC_ALARM = "sensor/water/alarm"
 TOPIC_OTA_COMMAND = "buoy/ota/update"
 TOPIC_OTA_STATUS = "buoy/ota/status"
 
+BAKED_MODEL_PATH = os.getenv("BAKED_MODEL_PATH", "model_v2.onnx")
 MODEL_PATH = os.getenv("MODEL_PATH", "model_v2.onnx")
 TEMP_MODEL_PATH = MODEL_PATH + ".tmp"
 TRANSFORM_PATH = os.getenv("TRANSFORM_PATH", os.getenv("UNSCALER_PATH", os.getenv("LAMBDA_PATH", "target_transform.json")))
@@ -344,26 +347,50 @@ def _handle_ota_update(client: mqtt.Client, payload: dict) -> None:
         _publish_ota_status(client, version, "failed", f"Load error: Decompression failed ({e})")
         return
 
-    # 3. Trial-load candidate model in isolated session
+    # 3. Pre-swap memory reclamation:
+    # An uncompressed 943 MB TreeEnsemble graph consumes ~6.8 GB of C++ heap in ONNX Runtime.
+    # Holding two concurrent sessions simultaneously would require 13.6 GB, exceeding the
+    # 8 GB physical RAM of the Raspberry Pi 4. To perform the hot-swap with zero OOM risk,
+    # we release the active reference and invoke glibc malloc_trim(0).
+    print("[INFO] [OTAManager] Reclaiming memory arena before candidate model load...")
+    global current_model
     try:
+        with model_lock:
+            old_model = current_model
+            current_model = None
+
+        del old_model
+        gc.collect()
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
+
+        # 4. Trial-load candidate model in clean memory space
         sess_options = rt.SessionOptions()
         sess_options.intra_op_num_threads = 1
         sess_options.inter_op_num_threads = 1
         new_model = rt.InferenceSession(TEMP_MODEL_PATH, sess_options=sess_options, providers=['CPUExecutionProvider'])
     except Exception as e:
-        print(f"[ERROR] [OTAManager] Model deserialization error: {e}. Aborting hot-swap.")
+        print(f"[ERROR] [OTAManager] Model load/swap error: {e}. Rolling back to previous model.")
         if os.path.exists(TEMP_MODEL_PATH):
             os.remove(TEMP_MODEL_PATH)
+        try:
+            fallback_model = rt.InferenceSession(MODEL_PATH, sess_options=sess_options, providers=['CPUExecutionProvider'])
+            with model_lock:
+                current_model = fallback_model
+        except Exception as rb_err:
+            print(f"[ERROR] [OTAManager] Critical rollback error: {rb_err}")
         _publish_ota_status(client, version, "failed", f"Load error: {e}")
         return
 
     print("[INFO] [OTAManager] Trial-load verification passed successfully.")
 
-    # 4. Thread-safe in-memory reference swap
+    # 5. Thread-safe in-memory reference activation
     with model_lock:
         current_model = new_model
 
-    # 5. Atomic persistence to disk
+    # 6. Atomic persistence to disk
     os.replace(TEMP_MODEL_PATH, MODEL_PATH)
 
     print(f"[INFO] [OTAManager] Update completed: Version {version} active and persisted.")
@@ -423,9 +450,23 @@ def _handle_sensor_reading(client, msg):
         ]], dtype=np.float32)
 
         with model_lock:
-            input_name = current_model.get_inputs()[0].name
-            label_name = current_model.get_outputs()[0].name
-            pred_transformed = float(current_model.run([label_name], {input_name: input_data})[0][0])
+            active_model = current_model
+
+        # If model is momentarily being swapped by OTA manager, wait briefly
+        if active_model is None:
+            for _ in range(20):
+                time.sleep(0.5)
+                with model_lock:
+                    active_model = current_model
+                if active_model is not None:
+                    break
+            if active_model is None:
+                print("  [WARN] [InferenceEngineV2] Engine not ready during OTA swap, skipping sample.")
+                return
+
+        input_name = active_model.get_inputs()[0].name
+        label_name = active_model.get_outputs()[0].name
+        pred_transformed = float(np.asarray(active_model.run([label_name], {input_name: input_data})[0]).flatten()[0])
             
         # Target unscaling via inverse power transform (enforcing non-negative concentration)
         raw_prediction = _inverse_power_transform(pred_transformed, Y_LAMBDA, Y_MEAN, Y_SCALE)
@@ -456,6 +497,12 @@ def _handle_sensor_reading(client, msg):
         # --- 24-Hour Smart Batching ---
         reading_data = {
             "timestamp": str(timestamp),
+            "features": {
+                "temperature": float(features.get("EXO3(Temp_C)", 0.0)),
+                "sp_cond": float(features.get("EXO3(spCond_uS_cm)", 0.0)),
+                "ph": float(features.get("EXO3(pH)", 0.0)),
+                "battery": float(features.get("SystemBattery", 0.0))
+            },
             "predicted_chlorophyll": round(float(prediction), 3),
             "actual_chlorophyll": round(float(ground_truth), 3),
             "alarm": bool(alarm),

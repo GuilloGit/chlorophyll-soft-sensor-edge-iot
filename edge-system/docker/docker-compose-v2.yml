@@ -19,7 +19,7 @@ services:
       - MQTT_BROKER=mqtt_broker
       - MQTT_PORT=1883
       - REAL_INTERVAL_SEC=900
-      - TIME_SCALE_FACTOR=900000
+      - TIME_SCALE_FACTOR=450
     volumes:
       - sensor_data:/data
       - ../sensor-sim/data:/app/data:ro
@@ -35,8 +35,10 @@ services:
       - MQTT_PORT=1883
       - DB_PATH=/data/sensor_data.db
       - MODEL_PATH=/data/model_v2.onnx
+      - BATCH_SIZE=20
     volumes:
       - sensor_data:/data
+      - ../app-v2/app.py:/app/app.py:ro
     restart: unless-stopped
 
 volumes:

@@ -12,8 +12,8 @@
         "alarm_threshold_ug_L": 10.0,
         "model_format": "ONNX Runtime (V2)",
         "y_lambda": 0.02829662709583453,
-        "y_mean": 2.1953387515664176,
-        "y_scale": 0.7377154823101166,
+        "y_mean": 2.195338745088337,
+        "y_scale": 0.7377154756736171,
         "literature_reference": "Mozo et al. (2022) Scientific Reports"
     },
     "regression_holdout": {
@@ -24,8 +24,8 @@
             "r2": -9.896
         },
         "naive_mean_baseline": {
-            "mae_ug_L": 6.119,
-            "mse": 41.048,
+            "mae_ug_L": 6.118,
+            "mse": 41.047,
             "rmse_ug_L": 6.407,
             "r2": -4.267,
             "train_mean_value": 8.867

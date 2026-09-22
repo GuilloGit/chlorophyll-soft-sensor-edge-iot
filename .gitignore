@@ -84,3 +84,11 @@ node_modules/
 .config.users.json*
 flows_cred.json
 
+# Office and local scratch exports
+*.xlsx
+~$*
+/telemetry_measurements.csv
+/edge_performance_report.json
+
+
+

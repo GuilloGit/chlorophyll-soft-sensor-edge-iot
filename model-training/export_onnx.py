@@ -182,10 +182,16 @@ def export_chunked_onnx(model_in: str = MODEL_IN_PATH,
     print(f"[INFO] [ONNXExport] Raw ONNX export completed: {model_out} ({raw_size_mb:.2f} MB, SHA-256: {raw_hash})")
 
     # 7. Compress artifact using LZMA (.xz) for Over-The-Air (OTA) transport
-    xz_out = model_out + ".xz"
+    compress_model_lzma(model_out)
+
+
+def compress_model_lzma(model_path: str = MODEL_OUT_PATH) -> str:
+    """Compresses an existing ONNX model binary using LZMA (.xz) preset=6."""
+    raw_size_mb = os.path.getsize(model_path) / (1024 * 1024)
+    xz_out = model_path + ".xz"
     print(f"[INFO] [ONNXExport] Generating LZMA compressed OTA archive: {xz_out}...")
     xz_sha = hashlib.sha256()
-    with open(model_out, "rb") as f_in, lzma.open(xz_out, "wb", preset=6) as f_out:
+    with open(model_path, "rb") as f_in, lzma.open(xz_out, "wb", preset=6) as f_out:
         while chunk := f_in.read(1024 * 1024):
             f_out.write(chunk)
             xz_sha.update(chunk)
@@ -200,7 +206,20 @@ def export_chunked_onnx(model_in: str = MODEL_IN_PATH,
     xz_size_mb = os.path.getsize(xz_out) / (1024 * 1024)
     reduction_pct = (1.0 - (xz_size_mb / raw_size_mb)) * 100.0
     print(f"[INFO] [ONNXExport] LZMA OTA archive completed: {xz_out} ({xz_size_mb:.2f} MB, -{reduction_pct:.2f}%, SHA-256: {archive_hash})")
+    return archive_hash
 
 
 if __name__ == "__main__":
-    export_chunked_onnx()
+    import argparse
+    parser = argparse.ArgumentParser(description="Export Scikit-Learn pipeline to ONNX and compress with LZMA")
+    parser.add_argument(
+        "--compress-only",
+        action="store_true",
+        help="Skip ONNX graph conversion and only compress existing ONNX binary"
+    )
+    args = parser.parse_args()
+
+    if args.compress_only:
+        compress_model_lzma()
+    else:
+        export_chunked_onnx()

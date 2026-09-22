@@ -337,6 +337,12 @@ def _handle_sensor_reading(client, msg):
         # --- Batching Logic ---
         reading_data = {
             "timestamp": str(timestamp),
+            "features": {
+                "temperature": float(features.get("EXO3(Temp_C)", 0.0)),
+                "sp_cond": float(features.get("EXO3(spCond_uS_cm)", 0.0)),
+                "ph": float(features.get("EXO3(pH)", 0.0)),
+                "battery": float(features.get("SystemBattery", 0.0))
+            },
             "predicted_chlorophyll": round(float(prediction), 3),
             "actual_chlorophyll": round(float(ground_truth), 3),
             "alarm": bool(alarm),
