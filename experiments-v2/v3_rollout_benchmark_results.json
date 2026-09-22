@@ -1,0 +1,72 @@
+{
+  "timestamp": "2026-09-18T19:47:30Z",
+  "dataset": "As Conchas Reservoir (Playa & Presa buoys)",
+  "holdout_samples": 21713,
+  "pilot_samples": 2000,
+  "models": {
+    "v1_baseline": {
+      "model": "V1 Scikit-Learn Baseline (4 features unpruned)",
+      "mae": 6.232,
+      "rmse": 9.215,
+      "r2": -9.896,
+      "precision": 0.0112,
+      "recall": 0.0744,
+      "specificity": 0.7119,
+      "f1_score": 0.0195,
+      "roc_auc": 0.4882,
+      "TP": 68,
+      "FP": 5992,
+      "FN": 846,
+      "TN": 14807
+    },
+    "v2_baseline": {
+      "model": "V2 ONNX Runtime Baseline (4 features unpruned chunked)",
+      "mae": 6.232,
+      "rmse": 9.215,
+      "r2": -9.896,
+      "precision": 0.0112,
+      "recall": 0.0744,
+      "specificity": 0.7111,
+      "f1_score": 0.0191,
+      "roc_auc": 0.4882,
+      "TP": 68,
+      "FP": 6009,
+      "FN": 846,
+      "TN": 14790
+    },
+    "v3_pruned_instant": {
+      "model": "V3-Pruned Instantaneous (3 features)",
+      "mae": 5.748,
+      "rmse": 8.052,
+      "r2": -7.32,
+      "precision": 0.0096,
+      "recall": 0.0646,
+      "specificity": 0.7074,
+      "f1_score": 0.0167,
+      "roc_auc": 0.4825,
+      "TP": 59,
+      "FP": 6086,
+      "FN": 855,
+      "TN": 14713,
+      "total_true_alarms": 914,
+      "total_pred_alarms": 6145
+    },
+    "v3_rollout_24h": {
+      "model": "V3-Rollout 24-Hour Average (3 features)",
+      "mae": 5.943,
+      "rmse": 8.565,
+      "r2": -8.414,
+      "precision": 0.0079,
+      "recall": 0.0514,
+      "specificity": 0.7149,
+      "f1_score": 0.0136,
+      "roc_auc": 0.5162,
+      "TP": 47,
+      "FP": 5930,
+      "FN": 867,
+      "TN": 14869,
+      "total_true_alarms": 914,
+      "total_pred_alarms": 5977
+    }
+  }
+}
